@@ -1,99 +1,3 @@
-Private Const PCM_PATH = "\\Spi60001.eadscasa.casa.corp\a400m san pablo\Lean_Manufacturing\10.- PCM\28. PCM\"
-
-Sub generateFile(ByRef selectedGroups, ByVal selectAll, ByVal separate)
-    Application.ScreenUpdating = False
-    Application.Calculation = xlCalculationManual
-
-    Dim workbookCombined As Workbook
-    Dim combinedSheet As Worksheet
-    Dim lastRow As Long, lastColumn As Long
-    Dim targetRow As Long, i As Long
-
-    ' Crear y activar workbook combinado
-    Set workbookCombined = Workbooks.Add
-    Set combinedSheet = workbookCombined.Sheets(1)
-
-    ' Especificar el orden de las columnas en el archivo final
-    Dim columnOrder As Variant
-    columnOrder = Array("User - User last name", "User - User first name", "Training - Training type", "Training - Material type name", _
-                         "Training - Training title", "Training record - Training record status", "Training record - Last training record status change date", _
-                         "Training record - Training record completed date", "Training - Classroom session ID number", "Training - Training starting date", _
-                         "Training - Training end date", "Training record - Passed", "Training record - Curriculum (Training Record) - Curriculum title (training record)", _
-                         "Training record - Curriculum (Training Record) - Curriculum version (training record)", "Training - Training topic", "Training - Training hours", _
-                         "Training - Training price", "User - Supervisory", "User - User ID", "User - Manager - User full name", "Assignment - Assignment created date", _
-                         "Assignment - Assignment created by (name)", "Assignment - Assignment comments", "User - Supervisory ID", "Training - Source - LO root ID")
-
-    ' Agregar encabezados al archivo final
-    combinedSheet.Range("A1").Resize(1, UBound(columnOrder) + 1).Value = columnOrder
-
-    ' Leer datos de los archivos fuente y mapear columnas
-    Call processSourceFile("Before", "My_Team_Learning_before_*.xls*", combinedSheet, columnOrder)
-    Call processSourceFile("2020-2024", "My_Team_Learning_2020-2024*.xls*", combinedSheet, columnOrder)
-    Call processSourceFile("Since", "My_Team_Learning_since_*.xls*", combinedSheet, columnOrder)
-    Call processSourceFile("All_Events", "My_Team_Events*.xls*", combinedSheet, columnOrder, True)
-
-    ' Llamar a la función para abrir el CSV y actualizar workbookCombined
-    Call OpenLatestCSVAndConvertToColumns("YourName", workbookCombined)
-
-    ' Guardar el archivo combinado
-    workbookCombined.Sheets(1).name = "My Team All Learning"
-    workbookCombined.SaveAs fileName:=ThisWorkbook.Path & "\Output\My Team All Learning_" & Format(Date, "dd_mm_yyyy")
-    workbookCombined.Close SaveChanges:=True
-
-    Application.ScreenUpdating = True
-    Application.Calculation = xlCalculationAutomatic
-End Sub
-
-Sub processSourceFile(ByVal fileCategory As String, ByVal filePattern As String, ByRef combinedSheet As Worksheet, ByVal columnOrder As Variant, Optional filterExempt As Boolean = False)
-    Dim filePath As String, workbookSource As Workbook, lastRow As Long, lastColumn As Long
-    Dim sourceData As Variant, sourceHeaders As Object, i As Long, j As Long, targetRow As Long
-
-    filePath = getFilePath(fileCategory, filePattern)
-    If filePath = "" Then Exit Sub
-
-    Set workbookSource = Workbooks.Open(filePath)
-    Set sourceHeaders = CreateObject("Scripting.Dictionary")
-
-    ' Leer encabezados de la hoja origen
-    lastColumn = workbookSource.Sheets(1).Cells(1, 1).End(xlToRight).column
-    For i = 1 To lastColumn
-        sourceHeaders(workbookSource.Sheets(1).Cells(1, i).Value) = i
-    Next i
-
-    ' Leer datos de la hoja en un array
-    lastRow = workbookSource.Sheets(1).Cells(1, 1).End(xlDown).row
-    sourceData = workbookSource.Sheets(1).Range(workbookSource.Sheets(1).Cells(2, 1), workbookSource.Sheets(1).Cells(lastRow, lastColumn)).Value
-    workbookSource.Close SaveChanges:=False
-
-    ' Determinar la fila de inicio en el archivo combinado
-    targetRow = combinedSheet.Cells(Rows.Count, 1).End(xlUp).row + 1
-
-    ' Mapear datos al nuevo orden de columnas y escribir en bloque
-    Dim resultArray() As Variant
-    Dim numRows As Long, numCols As Long, rowIndex As Long
-    numRows = UBound(sourceData, 1)
-    numCols = UBound(columnOrder) + 1
-    ReDim resultArray(1 To numRows, 1 To numCols)
-
-    rowIndex = 1
-    For i = 1 To numRows
-        If Not filterExempt Or (filterExempt And sourceData(i, sourceHeaders("Training record - Training record status")) = "Exempt") Then
-            ' Verificar si la columna "User - Division" contiene "TAOA"
-            If sourceHeaders.Exists("User - Supervisory") And InStr(sourceData(i, sourceHeaders("User - Supervisory")), "TAOA") > 0 _
-            Or sourceHeaders.Exists("User - Supervisory") And InStr(sourceData(i, sourceHeaders("User - Supervisory")), "TAOQ") > 0 Then
-                For j = LBound(columnOrder) To UBound(columnOrder)
-                    If sourceHeaders.Exists(columnOrder(j)) Then
-                        resultArray(rowIndex, j + 1) = sourceData(i, sourceHeaders(columnOrder(j)))
-                    End If
-                Next j
-                rowIndex = rowIndex + 1
-            End If
-        End If
-    Next i
-
-    combinedSheet.Cells(targetRow, 1).Resize(UBound(resultArray, 1), numCols).Value = resultArray
-End Sub
-
 Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workbook)
 
     Dim folderPath As String, latestFile As String, latestDate As Date
@@ -129,11 +33,12 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
         GoTo CleanExit
     End If
 
+    ' Abrir el CSV respetando la configuración local
     Workbooks.Open fileName:=latestFile, Local:=True
     Set csvWs = ActiveSheet
     csvLastRow = csvWs.Cells(csvWs.Rows.Count, 1).End(xlUp).row
 
-    ' Convertir a columnas si es necesario
+    ' Convertir a columnas de manera segura (solo columna A)
     If csvWs.Cells(1, 1).Text Like "*,*" Then
         csvWs.Range("A1:A" & csvLastRow).TextToColumns Destination:=csvWs.Range("A1"), DataType:=xlDelimited, Comma:=True
     End If
@@ -151,42 +56,67 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
     combinedUserIDCol = Application.Match("User - User ID", combinedSheet.Rows(1), 0)
     combinedDateCol = Application.Match("Training record - Training record completed date", combinedSheet.Rows(1), 0)
 
-    ' 1. NORMALIZAR FECHAS EN EL CSV
+    ' =========================================================================
+    ' 1. NUEVA LÓGICA INTELIGENTE: NORMALIZAR FECHAS EN EL CSV A DD-MM-YYYY
+    ' =========================================================================
     If Not IsError(csvDateCol) Then
         For i = 2 To csvLastRow
             v = csvWs.Cells(i, CLng(csvDateCol)).Value2
+            s = Trim$(csvWs.Cells(i, CLng(csvDateCol)).Text)
             parsed = Empty
-            If Not IsError(v) Then
-                If IsDate(v) And Not isEmpty(v) Then
-                    parsed = CDate(v)
-                Else
-                    s = Trim$(CStr(v))
-                    If Len(s) > 0 Then
-                        datePart = IIf(InStr(s, " ") > 0, Split(s, " ")(0), s)
-                        sep = IIf(InStr(datePart, "/") > 0, "/", IIf(InStr(datePart, "-") > 0, "-", ""))
-                        If sep <> "" Then
-                            parts = Split(datePart, sep)
-                            If UBound(parts) = 2 Then
-                                d = Val(parts(0)): m = Val(parts(1)): y = Val(parts(2)) ' <- Cambiado orden a d y m
-                                If y < 100 Then y = IIf(y >= 30, 1900 + y, 2000 + y)
-                                If m >= 1 And m <= 12 And d >= 1 And d <= 31 Then parsed = DateSerial(y, m, d)
+            
+            If Not IsError(v) And Len(s) > 0 Then
+                ' Extraer solo la parte de la fecha si viene con hora (ej: "13/05/2024 14:30")
+                datePart = IIf(InStr(s, " ") > 0, Split(s, " ")(0), s)
+                sep = IIf(InStr(datePart, "/") > 0, "/", IIf(InStr(datePart, "-") > 0, "-", ""))
+                
+                If sep <> "" Then
+                    parts = Split(datePart, sep)
+                    If UBound(parts) = 2 Then
+                        Dim val1 As Long, val2 As Long
+                        val1 = Val(parts(0)): val2 = Val(parts(1)): y = Val(parts(2))
+                        If y < 100 Then y = IIf(y >= 30, 1900 + y, 2000 + y)
+                        
+                        ' Detectar si el formato del texto original es MM-DD-YYYY o DD-MM-YYYY
+                        If val1 > 12 Then
+                            ' Si el primer número es > 12, indiscutiblemente es el DÍA (Format: DD-MM-YYYY)
+                            d = val1: m = val2
+                        ElseIf val2 > 12 Then
+                            ' Si el segundo número es > 12, el primero es el MES (Format: MM-DD-YYYY) -> Lo invertimos
+                            d = val2: m = val1
+                        Else
+                            ' Si ambos números son <= 12 (caso ambiguo tipo 05-04-2024), confiamos en la interpretación nativa de VBA
+                            If IsDate(v) Then
+                                d = Day(CDate(v)): m = Month(CDate(v)): y = Year(CDate(v))
+                            Else
+                                ' Si no es fecha nativa, asumimos el estándar que necesitas (val1 = d, val2 = m)
+                                d = val1: m = val2
                             End If
-                        ElseIf IsDate(datePart) Then
-                            parsed = CDate(datePart)
+                        End If
+                        
+                        ' Validar y generar la fecha correcta corregida
+                        If m >= 1 And m <= 12 And d >= 1 And d <= 31 Then
+                            parsed = DateSerial(y, m, d)
                         End If
                     End If
+                ElseIf IsDate(v) Then
+                    parsed = CDate(v)
                 End If
             End If
-            If Not isEmpty(parsed) Then csvWs.Cells(i, CLng(csvDateCol)).Value = parsed
+            
+            ' Guardar la fecha real en la celda del CSV
+            If Not IsEmpty(parsed) Then 
+                csvWs.Cells(i, CLng(csvDateCol)).Value = parsed
+            End If
         Next i
     End If
+    ' =========================================================================
 
-    ' 2. CARGAR CSV AL DICCIONARIO (Buscando los 3 estados)
+    ' 2. CARGAR CSV AL DICCIONARIO
     Set csvData = CreateObject("Scripting.Dictionary")
     For i = 2 To csvLastRow
         Dim st As String: st = CStr(csvWs.Cells(i, CLng(csvStatusCol)).Value)
        
-        ' Verificamos si es "Completed", "Registered" o "Completed (Equivalent)"
         If InStr(1, st, "Completed", vbTextCompare) > 0 Or st = "Registered" Then
             csvKey = Trim(CStr(csvWs.Cells(i, CLng(csvUserIDCol)).Value)) & "|" & Trim(CStr(csvWs.Cells(i, CLng(csvTitleCol)).Value))
             csvData(csvKey) = csvWs.Cells(i, CLng(csvDateCol)).Value
@@ -202,22 +132,22 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
         For j = LBound(courseList, 1) To UBound(courseList, 1)
             course = Trim(CStr(courseList(j, 1)))
            
-            ' Si el curso coincide
             If InStr(1, CStr(combinedSheet.Cells(i, CLng(combinedTitleCol)).Value), course, vbTextCompare) > 0 Then
                 csvKey = Trim(CStr(combinedSheet.Cells(i, CLng(combinedUserIDCol)).Value)) & "|" & course
                
-                ' Si el usuario/curso está en el diccionario del CSV
                 If csvData.Exists(csvKey) Then
-                    newDate = CDate(csvData(csvKey))
-                    oldDate = combinedSheet.Cells(i, CLng(combinedDateCol)).Value
-                   
-                    ' COMPROBACIÓN: Si la fecha es más reciente (o no había fecha antes)
-                    ' Quitamos el filtro de estado: entra independientemente de lo que ponga en la columna F
-                    If Not IsDate(oldDate) Or newDate > CDate(oldDate) Then
-                        combinedSheet.Cells(i, CLng(combinedStatusCol)).Value = "Completed"
-                        combinedSheet.Cells(i, CLng(combinedDateCol)).Value = newDate
-                        combinedSheet.Cells(i, CLng(combinedDateCol)).NumberFormat = "dd/mm/yyyy"
-                        combinedSheet.Cells(i, CLng(combinedDateCol)).Interior.Color = RGB(255, 255, 0)
+                    ' Asegurar que tratamos las fechas de forma segura mediante DateSerial o verificación limpia
+                    If IsDate(csvData(csvKey)) Then
+                        newDate = CDate(csvData(csvKey))
+                        oldDate = combinedSheet.Cells(i, CLng(combinedDateCol)).Value
+                       
+                        If Not IsDate(oldDate) Or newDate > CDate(oldDate) Then
+                            combinedSheet.Cells(i, CLng(combinedStatusCol)).Value = "Completed"
+                            combinedSheet.Cells(i, CLng(combinedDateCol)).Value = newDate
+                            ' Forzar visualmente el formato en la celda destino
+                            combinedSheet.Cells(i, CLng(combinedDateCol)).NumberFormat = "dd/mm/yyyy"
+                            combinedSheet.Cells(i, CLng(combinedDateCol)).Interior.Color = RGB(255, 255, 0)
+                        End If
                     End If
                 End If
             End If
@@ -229,152 +159,9 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
 CleanExit:
     Application.ScreenUpdating = True
     Application.EnableEvents = True
-    Application.Calculation = xlCalculationManual
+    Application.Calculation = xlCalculationAutomatic
     Exit Sub
 CleanFail:
     MsgBox "Error: " & Err.Description
     Resume CleanExit
 End Sub
-
-
-Sub splitSiglum()
-    Dim supervisoryCol, siglumCol, lastRow, lastCol, siglum, aux
-
-    supervisoryCol = Application.WorksheetFunction.Match("User - Supervisory", ActiveSheet.Rows(1), 0)
-    lastRow = Cells(1, 1).End(xlDown).row
-    lastCol = Cells(1, 1).End(xlLeftToRight).column
-    siglumCol = lastCol + 1
-
-    Cells(1, siglumCol) = "SIGLUM-AUX"
-
-    For i = 2 To lastRow
-        aux = Replace(Cells(i, supervisoryCol), " ", "")
-        aux = Split(aux, "\")
-        siglum = Split(aux(UBound(aux)), "-")(0)
-
-        Cells(i, siglumCol).Value = siglum
-    Next i
-End Sub
-
-Sub extractCurrentData(ByVal name As String)
-    Dim lastRow, lastCol, sheetName
-
-    lastRow = Cells(1, 1).End(xlDown).row
-    lastCol = Cells(1, 1).End(xlLeftToRight).column - 1
-    sheetName = Sheets(1).name
-
-    Range(Cells(1, 1), Cells(lastRow, lastCol)).SpecialCells(xlCellTypeVisible).Copy
-
-    Set workbookNew = Workbooks.Add
-    Sheets(1).Activate
-    Sheets(1).name = sheetName
-
-    Range("A1").PasteSpecial xlPasteColumnWidths
-    Range("A1").PasteSpecial xlPasteAll
-    Cells(1, 1).Select
-
-    workbookNew.SaveAs fileName:=ThisWorkbook.Path & "\Output\My Team All Learning_" & name & Format(Date, "dd_mm_yyyy")
-
-    workbookNew.Close
-End Sub
-
-Function getFilters(ByRef selectedGroups) As Dictionary
-    Dim filters As Dictionary
-    Dim row, column, j As Integer
-    Dim stringFilter() As String
-
-    Set filters = New Dictionary
-
-    For k = 0 To UBound(selectedGroups)
-        ReDim stringFilter(0 To 0)
-        j = 0
-
-        col = Application.WorksheetFunction.Match(selectedGroups(k), ActiveSheet.Rows(1), 0)
-        row = Cells(1, col).End(xlDown).row
-
-        For i = 2 To row
-            ReDim Preserve stringFilter(0 To j)
-            stringFilter(j) = Cells(i, col).Value
-            j = j + 1
-        Next i
-        filters.Add selectedGroups(k), stringFilter
-    Next k
-
-    Set getFilters = filters
-End Function
-
-Function getSelectedGroups(ByRef isEmpty As Boolean) As Variant
-    Dim arraySelected() As String
-    Dim j As Integer
-
-    j = 0
-    For i = 0 To Formulario.ListBoxGroupSelection.ListCount - 1
-        If Formulario.ListBoxGroupSelection.Selected(i) Then
-            ReDim Preserve arraySelected(0 To j)
-            arraySelected(j) = Formulario.ListBoxGroupSelection.List(i)
-            j = j + 1
-        End If
-    Next i
-    If j = 0 Then
-        isEmpty = True
-    Else
-        isEmpty = False
-    End If
-    getSelectedGroups = arraySelected
-End Function
-
-Public Function getFilePath(ByVal fileName As String, ByVal fileFilter As String) As String
-    Dim importFilePath As String
-
-    importFilePath = openMostRecentWorkbook(folderPath:=PCM_PATH, fileFilter:=fileFilter)
-
-    If importFilePath = "" Then
-        MsgBox "No se ha encontrado el fichero que contiene el nombre " & fileFilter & " en la ruta " & PCM_PATH
-        importFilePath = getFilefromUser(fileName)
-    End If
-
-    getFilePath = importFilePath
-End Function
-
-Private Function getFilefromUser(ByVal titleString As String) As String
-    Dim selectedFile As Variant
-    ' Mostrar el cuadro de diálogo "Abrir archivo"
-    selectedFile = Application.GetOpenFilename(Title:="Fichero " & titleString)
-    getFilefromUser = selectedFile
-End Function
-
-Private Function openMostRecentWorkbook(ByVal folderPath As String, ByVal fileFilter As String) As String
-    Dim fileName As String
-    Dim mostRecentDate As Date
-    Dim currentFileDate As Date
-    Dim mostRecentWorkbook
-
-    ' Initialize variables
-    mostRecentDate = 0
-    fileName = Dir(folderPath & fileFilter)
-
-    ' Loop through files in the folder
-    Do While fileName <> ""
-        ' Get the last modified date of the current file
-        currentFileDate = FileDateTime(folderPath & fileName)
-
-        ' Check if the current file is more recent than the previously found file
-        If currentFileDate > mostRecentDate Then
-            mostRecentDate = currentFileDate
-            mostRecentWorkbook = fileName
-        End If
-
-        ' Move to the next file
-        fileName = Dir
-    Loop
-
-    ' Check if a workbook was found
-    If mostRecentWorkbook <> "" Then
-        ' Open the most recent workbook
-        openMostRecentWorkbook = folderPath & mostRecentWorkbook
-    Else
-        MsgBox "No hay un workbook válido en la ruta: " & folderPath, vbExclamation
-        openMostRecentWorkbook = ""
-    End If
-End Function
-
