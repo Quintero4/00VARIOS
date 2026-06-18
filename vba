@@ -1,3 +1,9 @@
+' Convertir a columnas si es necesario (solo apuntando a la columna A)
+    If csvWs.Cells(1, 1).Text Like "*,*" Then
+        csvWs.Range("A1:A" & csvLastRow).TextToColumns Destination:=csvWs.Range("A1"), DataType:=xlDelimited, Comma:=True
+    End If
+
+
 If UBound(parts) = 2 Then
     d = Val(parts(0)): m = Val(parts(1)): y = Val(parts(2)) ' <- Cambiado orden a d y m
     If y < 100 Then y = IIf(y >= 30, 1900 + y, 2000 + y)
