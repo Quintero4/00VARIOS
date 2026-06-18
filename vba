@@ -1,16 +1,3 @@
-' Convertir a columnas si es necesario (solo apuntando a la columna A)
-    If csvWs.Cells(1, 1).Text Like "*,*" Then
-        csvWs.Range("A1:A" & csvLastRow).TextToColumns Destination:=csvWs.Range("A1"), DataType:=xlDelimited, Comma:=True
-    End If
-
-
-If UBound(parts) = 2 Then
-    d = Val(parts(0)): m = Val(parts(1)): y = Val(parts(2)) ' <- Cambiado orden a d y m
-    If y < 100 Then y = IIf(y >= 30, 1900 + y, 2000 + y)
-    If m >= 1 And m <= 12 And d >= 1 And d <= 31 Then parsed = DateSerial(y, m, d)
-End If
-
-
 Private Const PCM_PATH = "\\Spi60001.eadscasa.casa.corp\a400m san pablo\Lean_Manufacturing\10.- PCM\28. PCM\"
 
 Sub generateFile(ByRef selectedGroups, ByVal selectAll, ByVal separate)
@@ -142,13 +129,13 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
         GoTo CleanExit
     End If
 
-    Workbooks.Open fileName:=latestFile
+    Workbooks.Open fileName:=latestFile, Local:=True
     Set csvWs = ActiveSheet
     csvLastRow = csvWs.Cells(csvWs.Rows.Count, 1).End(xlUp).row
 
     ' Convertir a columnas si es necesario
     If csvWs.Cells(1, 1).Text Like "*,*" Then
-        csvWs.Range("A1:Z" & csvLastRow).TextToColumns Destination:=csvWs.Range("A1"), DataType:=xlDelimited, Comma:=True
+        csvWs.Range("A1:A" & csvLastRow).TextToColumns Destination:=csvWs.Range("A1"), DataType:=xlDelimited, Comma:=True
     End If
 
     Set combinedSheet = workbookCombined.Sheets(1)
@@ -180,7 +167,7 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
                         If sep <> "" Then
                             parts = Split(datePart, sep)
                             If UBound(parts) = 2 Then
-                                m = Val(parts(0)): d = Val(parts(1)): y = Val(parts(2))
+                                d = Val(parts(0)): m = Val(parts(1)): y = Val(parts(2)) ' <- Cambiado orden a d y m
                                 If y < 100 Then y = IIf(y >= 30, 1900 + y, 2000 + y)
                                 If m >= 1 And m <= 12 And d >= 1 And d <= 31 Then parsed = DateSerial(y, m, d)
                             End If
