@@ -1,3 +1,10 @@
+If UBound(parts) = 2 Then
+    d = Val(parts(0)): m = Val(parts(1)): y = Val(parts(2)) ' <- Cambiado orden a d y m
+    If y < 100 Then y = IIf(y >= 30, 1900 + y, 2000 + y)
+    If m >= 1 And m <= 12 And d >= 1 And d <= 31 Then parsed = DateSerial(y, m, d)
+End If
+
+
 Private Const PCM_PATH = "\\Spi60001.eadscasa.casa.corp\a400m san pablo\Lean_Manufacturing\10.- PCM\28. PCM\"
 
 Sub generateFile(ByRef selectedGroups, ByVal selectAll, ByVal separate)
