@@ -1,18 +1,20 @@
 Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workbook)
     Dim folderPath As String, latestFile As String, latestDate As Date
     Dim fso As Object, fil As Object
-    Dim csvWs As Worksheet, combinedSheet As Worksheet, execWs As Worksheet
+    Dim combinedSheet As Worksheet, execWs As Worksheet
+    Dim tempWs As Worksheet, qt As QueryTable
     Dim csvLastRow As Long, combinedLastRow As Long, i As Long, j As Long
     Dim csvTitleCol As Variant, csvStatusCol As Variant, csvUserIDCol As Variant, csvDateCol As Variant
     Dim combinedTitleCol As Variant, combinedStatusCol As Variant, combinedUserIDCol As Variant, combinedDateCol As Variant
     Dim csvData As Object, csvKey As String, courseList As Variant, course As Variant
-    Dim newDate As Date, oldDate As Variant, v As Variant
+    Dim newDate As Date, oldDate As Variant
     Dim rawVal As String, datePart As String, sep As String
     Dim parts() As String, d As Long, m As Long, y As Long
-    Dim colInfo() As Variant
-    
+    Dim colTypes(1 To 100) As Integer
+
     Application.ScreenUpdating = False
     Application.EnableEvents = False
+    Application.DisplayAlerts = False ' Evita confirmaciones visuales al borrar hojas
     Application.Calculation = xlCalculationManual
     On Error GoTo CleanFail
 
@@ -20,6 +22,7 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
     latestFile = "": latestDate = 0
     Set fso = CreateObject("Scripting.FileSystemObject")
     
+    ' 1. BUSCAR EL ARCHIVO MÁS RECIENTE
     For Each fil In fso.GetFolder(folderPath).Files
         If fil.name Like "Training History - Raw Data view*" And fil.name Like "*.csv" Then
             If fil.DateLastModified > latestDate Then
@@ -35,27 +38,34 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
     End If
 
     ' =========================================================================
-    ' BLOQUEO DE CONVERSIÓN DE FECHAS AMERICANA
+    ' SOLUCIÓN: IMPORTACIÓN DE CSV MEDIANTE QUERYTABLE (FORZANDO TEXTO)
     ' =========================================================================
-    ' Construimos un array para indicar a Excel que abra las primeras 100 columnas 
-    ' estrictamente como TEXTO PLANO (xlTextFormat = 2).
-    ReDim colInfo(0 To 99)
-    For i = 0 To 99
-        colInfo(i) = Array(i + 1, 2)
+    ' Creamos una hoja temporal dentro del libro combinado para la extracción limpia
+    Set tempWs = workbookCombined.Sheets.Add
+    
+    ' Definimos que las primeras 100 columnas se importen como TEXTO PURO (Valor = 2)
+    ' Esto inhabilita por completo el auto-parseo erróneo de fechas de Excel.
+    For i = 1 To 100
+        colTypes(i) = 2
     Next i
 
-    ' Abrimos el archivo aplicando la restricción de formato de texto
-    Workbooks.OpenText fileName:=latestFile, DataType:=xlDelimited, Comma:=True, FieldInfo:=colInfo, Local:=True
-    
-    Set csvWs = ActiveSheet
-    csvLastRow = csvWs.Cells(csvWs.Rows.Count, 1).End(xlUp).row
+    ' Conectamos e importamos el CSV de forma nativa en modo texto
+    Set qt = tempWs.QueryTables.Add(Connection:="TEXT;" & latestFile, Destination:=tempWs.Range("A1"))
+    With qt
+        .TextFileParseType = xlDelimited
+        .TextFileCommaDelimiter = True
+        .TextFileColumnDataTypes = colTypes
+        .Refresh BackgroundQuery:=False
+    End With
+
+    csvLastRow = tempWs.Cells(tempWs.Rows.Count, 1).End(xlUp).row
     Set combinedSheet = workbookCombined.Sheets(1)
     
-    ' Mapeo de columnas dinámico
-    csvTitleCol = Application.Match("Training Title", csvWs.Rows(1), 0)
-    csvStatusCol = Application.Match("Training Record Status", csvWs.Rows(1), 0)
-    csvUserIDCol = Application.Match("User - Corporate ID", csvWs.Rows(1), 0)
-    csvDateCol = Application.Match("Training Completion Date", csvWs.Rows(1), 0)
+    ' Mapeo de columnas dinámico sobre la hoja temporal limpia
+    csvTitleCol = Application.Match("Training Title", tempWs.Rows(1), 0)
+    csvStatusCol = Application.Match("Training Record Status", tempWs.Rows(1), 0)
+    csvUserIDCol = Application.Match("User - Corporate ID", tempWs.Rows(1), 0)
+    csvDateCol = Application.Match("Training Completion Date", tempWs.Rows(1), 0)
 
     combinedTitleCol = Application.Match("Training - Training title", combinedSheet.Rows(1), 0)
     combinedStatusCol = Application.Match("Training record - Training record status", combinedSheet.Rows(1), 0)
@@ -68,56 +78,49 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
     End If
 
     ' =========================================================================
-    ' PARSEO MANUAL AL FORMATO DD/MM/YYYY
-    ' =========================================================================
-    For i = 2 To csvLastRow
-        ' Como importamos como texto, rawVal es EXACTAMENTE lo que está en el CSV
-        rawVal = Trim(csvWs.Cells(i, CLng(csvDateCol)).Text)
-        If rawVal <> "" Then
-            ' Limpiamos las horas si vienen pegadas (ej. "14/03/2012 10:30")
-            datePart = Split(rawVal, " ")(0)
-            sep = IIf(InStr(datePart, "-") > 0, "-", "/")
-            
-            If InStr(datePart, sep) > 0 Then
-                parts = Split(datePart, sep)
-                If UBound(parts) = 2 Then
-                    ' Mapeo para DD/MM/YYYY
-                    d = Val(parts(0))
-                    m = Val(parts(1))
-                    y = Val(parts(2))
-                    
-                    ' Ajustar años a 4 dígitos si el sistema envía solo 2
-                    If y < 100 Then y = IIf(y >= 30, 1900 + y, 2000 + y)
-                    
-                    ' Generamos una fecha numérica pura de Excel a prueba de formatos
-                    If m >= 1 And m <= 12 And d >= 1 And d <= 31 Then
-                        csvWs.Cells(i, CLng(csvDateCol)).Value = DateSerial(y, m, d)
-                    End If
-                End If
-            ElseIf IsDate(datePart) Then
-                ' Red de seguridad por si alguna celda ya está parseada
-                csvWs.Cells(i, CLng(csvDateCol)).Value = CDate(datePart)
-            End If
-        End If
-    Next i
-
-    ' =========================================================================
-    ' CARGA DE DATOS Y CONSOLIDACIÓN
+    ' CARGAR CSV AL DICCIONARIO PARSEANDO LAS FECHAS MANUALMENTE
     ' =========================================================================
     Set csvData = CreateObject("Scripting.Dictionary")
+    
     For i = 2 To csvLastRow
-        Dim st As String: st = CStr(csvWs.Cells(i, CLng(csvStatusCol)).Value)
+        Dim st As String: st = CStr(tempWs.Cells(i, CLng(csvStatusCol)).Value)
         
         If InStr(1, st, "Completed", vbTextCompare) > 0 Or st = "Registered" Then
-            csvKey = Trim(CStr(csvWs.Cells(i, CLng(csvUserIDCol)).Value)) & "|" & Trim(CStr(csvWs.Cells(i, CLng(csvTitleCol)).Value))
+            csvKey = Trim(CStr(tempWs.Cells(i, CLng(csvUserIDCol)).Value)) & "|" & Trim(CStr(tempWs.Cells(i, CLng(csvTitleCol)).Value))
             
-            v = csvWs.Cells(i, CLng(csvDateCol)).Value
-            If IsDate(v) Then
-                csvData(csvKey) = v
+            ' Extraemos la cadena de texto de la fecha, libre de manipulaciones previas
+            rawVal = Trim(tempWs.Cells(i, CLng(csvDateCol)).Value)
+            
+            If rawVal <> "" Then
+                ' Separamos las horas si vinieran adjuntas en el string (ej: "14/03/2012 08:30")
+                datePart = IIf(InStr(rawVal, " ") > 0, Split(rawVal, " ")(0), rawVal)
+                sep = IIf(InStr(datePart, "/") > 0, "/", IIf(InStr(datePart, "-") > 0, "-", ""))
+                
+                If sep <> "" Then
+                    parts = Split(datePart, sep)
+                    If UBound(parts) = 2 Then
+                        ' Mapeamos con seguridad asumiendo que la estructura nativa es DD/MM/YYYY
+                        d = Val(parts(0))
+                        m = Val(parts(1))
+                        y = Val(parts(2))
+                        
+                        ' Corrección para años en formato de 2 dígitos
+                        If y < 100 Then y = IIf(y >= 30, 1900 + y, 2000 + y)
+                        
+                        ' Validamos límites lógicos antes de empaquetar la fecha real
+                        If m >= 1 And m <= 12 And d >= 1 And d <= 31 Then
+                            ' Guardamos el número de serie de fecha pura calculado mediante DateSerial
+                            csvData(csvKey) = DateSerial(y, m, d)
+                        End If
+                    End If
+                End If
             End If
         End If
     Next i
 
+    ' =========================================================================
+    ' ACTUALIZAR ARCHIVO BASE (Combined)
+    ' =========================================================================
     Set execWs = ThisWorkbook.Sheets("Ejecutar")
     courseList = execWs.Range("G2", execWs.Cells(execWs.Rows.Count, "G").End(xlUp)).Value
     combinedLastRow = combinedSheet.Cells(combinedSheet.Rows.Count, CLng(combinedTitleCol)).End(xlUp).row
@@ -130,14 +133,15 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
                 csvKey = Trim(CStr(combinedSheet.Cells(i, CLng(combinedUserIDCol)).Value)) & "|" & course
                 
                 If csvData.Exists(csvKey) Then
-                    newDate = CDate(csvData(csvKey))
+                    newDate = csvData(csvKey)
                     oldDate = combinedSheet.Cells(i, CLng(combinedDateCol)).Value
                     
+                    ' Si la celda destino no contiene una fecha válida o si la nueva es más reciente
                     If Not IsDate(oldDate) Or newDate > CDate(oldDate) Then
                         combinedSheet.Cells(i, CLng(combinedStatusCol)).Value = "Completed"
                         combinedSheet.Cells(i, CLng(combinedDateCol)).Value = newDate
                         
-                        ' Forzamos visualmente a formato numérico de fechas dd/mm/yyyy
+                        ' Aplicamos formato homogéneo de fecha corta regional estándar
                         combinedSheet.Cells(i, CLng(combinedDateCol)).NumberFormat = "dd/mm/yyyy"
                         combinedSheet.Cells(i, CLng(combinedDateCol)).Interior.Color = RGB(255, 255, 0)
                     End If
@@ -146,12 +150,15 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
         Next j
     Next i
 
-    ' Cerramos el CSV origen sin guardar cambios
-    csvWs.Parent.Close SaveChanges:=False
-
 CleanExit:
+    ' Eliminamos por completo la hoja temporal creada para que el archivo final quede limpio
+    On Error Resume Next
+    If Not tempWs Is Nothing Then tempWs.Delete
+    On Error GoTo 0
+    
     Application.ScreenUpdating = True
     Application.EnableEvents = True
+    Application.DisplayAlerts = True
     Application.Calculation = xlCalculationAutomatic
     Exit Sub
 CleanFail:
