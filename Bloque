@@ -7,8 +7,8 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
     Dim csvTitleCol As Variant, csvStatusCol As Variant, csvUserIDCol As Variant, csvDateCol As Variant
     Dim combinedTitleCol As Variant, combinedStatusCol As Variant, combinedUserIDCol As Variant, combinedDateCol As Variant
     Dim csvData As Object, csvKey As String, courseList As Variant, course As Variant
-    Dim newDate As Date, oldDate As Variant
-    Dim rawVal As String, datePart As String, sep As String
+    Dim newDate As Date, oldDate As Variant, parsedDate As Date
+    Dim rawVal As String, datePart As String, sep As String, csvTitle As String
     Dim parts() As String, d As Long, m As Long, y As Long
     Dim colTypes(1 To 100) As Integer
     Dim cleanCSVId As String, cleanCombinedId As String
@@ -24,7 +24,7 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
     latestFile = "": latestDate = 0
     Set fso = CreateObject("Scripting.FileSystemObject")
     
-    ' 1. BUSCAR EL ARCHIVO MÁS RECIENTE
+    ' 1. BUSCAR EL ARCHIVO CSV MÁS RECIENTE
     For Each fil In fso.GetFolder(folderPath).Files
         If fil.name Like "Training History - Raw Data view*" And fil.name Like "*.csv" Then
             If fil.DateLastModified > latestDate Then
@@ -39,17 +39,17 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
         GoTo CleanExit
     End If
 
-    ' 2. IMPORTACIÓN DE CSV FORZANDO PUNTO Y COMA Y CODIFICACIÓN UTF-8 (65001)
+    ' 2. IMPORTACIÓN DEL CSV CONFIGURADO PARA PUNTO Y COMA (;) Y UTF-8
     Set tempWs = workbookCombined.Sheets.Add
     For i = 1 To 100
-        colTypes(i) = 2 ' 2 = xlTextFormat (Importa todo estrictamente como texto plano)
+        colTypes(i) = 2 ' 2 = xlTextFormat (Fuerza la lectura como texto plano puro)
     Next i
 
     Set qt = tempWs.QueryTables.Add(Connection:="TEXT;" & latestFile, Destination:=tempWs.Range("A1"))
     With qt
-        .TextFilePlatform = 65001 ' Forzar UTF-8 para limpiar caracteres invisibles (BOM)
+        .TextFilePlatform = 65001 ' Forzar lectura en UTF-8 para neutralizar caracteres BOM invisibles
         .TextFileParseType = xlDelimited
-        .TextFileSemicolonDelimiter = True ' Delimitador por punto y coma
+        .TextFileSemicolonDelimiter = True ' Separador por punto y coma corregido
         .TextFileCommaDelimiter = False
         .TextFileColumnDataTypes = colTypes
         .Refresh BackgroundQuery:=False
@@ -58,7 +58,7 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
     csvLastRow = tempWs.Cells(tempWs.Rows.Count, 1).End(xlUp).row
     Set combinedSheet = workbookCombined.Sheets(1)
     
-    ' 3. BÚSQUEDA INTEGRAL DE COLUMNAS (Inmune a errores de coincidencia exacta)
+    ' 3. LOCALIZACIÓN DINÁMICA DE COLUMNAS CRÍTICAS
     csvTitleCol = Empty: csvStatusCol = Empty: csvUserIDCol = Empty: csvDateCol = Empty
     For col = 1 To tempWs.Cells(1, tempWs.Columns.Count).End(xlToLeft).Column
         headerText = tempWs.Cells(1, col).Value
@@ -77,57 +77,74 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
         If InStr(headerText, "Training record - Training record completed date") > 0 Then combinedDateCol = col
     Next col
 
-    ' Verificar que se mapearon todas las columnas críticas
     If IsEmpty(csvTitleCol) Or IsEmpty(csvStatusCol) Or IsEmpty(csvUserIDCol) Or IsEmpty(csvDateCol) Or _
        IsEmpty(combinedTitleCol) Or IsEmpty(combinedStatusCol) Or IsEmpty(combinedUserIDCol) Or IsEmpty(combinedDateCol) Then
-        MsgBox "Error crítico: No se encontraron las columnas necesarias en los encabezados.", vbCritical
+        MsgBox "Error: No se pudieron mapear las columnas correspondientes en los archivos.", vbCritical
         GoTo CleanExit
     End If
 
-    ' 4. PROCESAR Y CARGAR CSV AL DICCIONARIO CON PARSEO MANUAL DE FECHAS
+    ' Cargar listado oficial de cursos prioritarios para el mapeo previo
+    Set execWs = ThisWorkbook.Sheets("Ejecutar")
+    courseList = execWs.Range("G2", execWs.Cells(execWs.Rows.Count, "G").End(xlUp)).Value
+
+    ' 4. PROCESAR EL CSV TRATANDO DUPLICADOS Y AGRUPANDO POR CURSO OFICIAL
     Set csvData = CreateObject("Scripting.Dictionary")
     
     For i = 2 To csvLastRow
         Dim st As String: st = Trim(CStr(tempWs.Cells(i, CInt(csvStatusCol)).Value))
         
-        ' Filtro de estados válido para "Completed", "Registered" o "Completed (Equivalent)"
+        ' Aceptar variaciones de estado válidas
         If InStr(1, st, "Completed", vbTextCompare) > 0 Or InStr(1, st, "Registered", vbTextCompare) > 0 Then
-            
-            ' Normalizar ID eliminando ceros a la izquierda
             cleanCSVId = Trim(CStr(tempWs.Cells(i, CInt(csvUserIDCol)).Value))
             If IsNumeric(cleanCSVId) Then cleanCSVId = CStr(Val(cleanCSVId))
             
-            csvKey = cleanCSVId & "|" & Trim(CStr(tempWs.Cells(i, CInt(csvTitleCol)).Value))
-            rawVal = Trim(tempWs.Cells(i, CInt(csvDateCol)).Value)
+            csvTitle = Trim(CStr(tempWs.Cells(i, CInt(csvTitleCol)).Value))
             
-            If rawVal <> "" Then
-                datePart = IIf(InStr(rawVal, " ") > 0, Split(rawVal, " ")(0), rawVal)
-                sep = IIf(InStr(datePart, "/") > 0, "/", IIf(InStr(datePart, "-") > 0, "-", ""))
+            ' Validar contra la lista oficial para saltarse desajustes de texto en el CSV (como espacios dobles)
+            For j = LBound(courseList, 1) To UBound(courseList, 1)
+                course = Trim(CStr(courseList(j, 1)))
                 
-                If sep <> "" Then
-                    parts = Split(datePart, sep)
-                    If UBound(parts) = 2 Then
-                        ' Estructura inteligente para detectar si el año viene primero (YYYY-MM-DD) o al final
-                        If Len(parts(0)) = 4 Then
-                            y = Val(parts(0)): m = Val(parts(1)): d = Val(parts(2))
-                        Else
-                            d = Val(parts(0)): m = Val(parts(1)): y = Val(parts(2))
-                            If y < 100 Then y = IIf(y >= 30, 1900 + y, 2000 + y)
-                        End If
+                If InStr(1, csvTitle, course, vbTextCompare) > 0 Then
+                    csvKey = cleanCSVId & "|" & course
+                    rawVal = Trim(tempWs.Cells(i, CInt(csvDateCol)).Value)
+                    
+                    If rawVal <> "" Then
+                        datePart = IIf(InStr(rawVal, " ") > 0, Split(rawVal, " ")(0), rawVal)
+                        sep = IIf(InStr(datePart, "/") > 0, "/", IIf(InStr(datePart, "-") > 0, "-", ""))
                         
-                        ' Creación limpia del número de serie de fecha nativo de Excel
-                        If m >= 1 And m <= 12 And d >= 1 And d <= 31 Then
-                            csvData(csvKey) = DateSerial(y, m, d)
+                        If sep <> "" Then
+                            parts = Split(datePart, sep)
+                            If UBound(parts) = 2 Then
+                                ' Parseo de fechas estructurado
+                                If Len(parts(0)) = 4 Then
+                                    y = Val(parts(0)): m = Val(parts(1)): d = Val(parts(2))
+                                Else
+                                    d = Val(parts(0)): m = Val(parts(1)): y = Val(parts(2))
+                                    If y < 100 Then y = IIf(y >= 30, 1900 + y, 2000 + y)
+                                End If
+                                
+                                If m >= 1 And m <= 12 And d >= 1 And d <= 31 Then
+                                    parsedDate = DateSerial(y, m, d)
+                                    
+                                    ' GESTIÓN DE DUPLICADOS: Conservar siempre la fecha de ejecución más reciente del CSV
+                                    If csvData.Exists(csvKey) Then
+                                        If parsedDate > csvData(csvKey) Then
+                                            csvData(csvKey) = parsedDate
+                                        End If
+                                    Else
+                                        csvData(csvKey) = parsedDate
+                                    End If
+                                End If
+                            End If
                         End If
                     End If
+                    Exit For ' Match encontrado para esta fila del CSV, pasar a la siguiente
                 End If
-            End If
+            Next j
         End If
     Next i
 
-    ' 5. ACTUALIZAR ARCHIVO BASE (Combined)
-    Set execWs = ThisWorkbook.Sheets("Ejecutar")
-    courseList = execWs.Range("G2", execWs.Cells(execWs.Rows.Count, "G").End(xlUp)).Value
+    ' 5. VOLCADO Y ACTUALIZACIÓN EN LA HOJA COMBINED
     combinedLastRow = combinedSheet.Cells(combinedSheet.Rows.Count, CInt(combinedTitleCol)).End(xlUp).row
 
     For i = 2 To combinedLastRow
@@ -137,6 +154,7 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
         For j = LBound(courseList, 1) To UBound(courseList, 1)
             course = Trim(CStr(courseList(j, 1)))
             
+            ' Verificar si la celda de destino contiene el identificador del curso
             If InStr(1, CStr(combinedSheet.Cells(i, CInt(combinedTitleCol)).Value), course, vbTextCompare) > 0 Then
                 csvKey = cleanCombinedId & "|" & course
                 
@@ -144,7 +162,7 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
                     newDate = csvData(csvKey)
                     oldDate = combinedSheet.Cells(i, CInt(combinedDateCol)).Value
                     
-                    ' Si la fecha es nueva o más reciente, se vuelca
+                    ' Guardar la fecha en caso de ser un nuevo registro o una actualización posterior
                     If Not IsDate(oldDate) Or newDate > CDate(oldDate) Then
                         combinedSheet.Cells(i, CInt(combinedStatusCol)).Value = "Completed"
                         combinedSheet.Cells(i, CInt(combinedDateCol)).Value = newDate
