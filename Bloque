@@ -12,6 +12,7 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
     Dim parts() As String, d As Long, m As Long, y As Long
     Dim colTypes(1 To 100) As Integer
     Dim cleanCSVId As String, cleanCombinedId As String
+    Dim col As Long, headerText As String
 
     Application.ScreenUpdating = False
     Application.EnableEvents = False
@@ -38,16 +39,18 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
         GoTo CleanExit
     End If
 
-    ' 2. IMPORTACIÓN DE CSV FORZANDO TEXTO PLANO
+    ' 2. IMPORTACIÓN DE CSV FORZANDO PUNTO Y COMA Y CODIFICACIÓN UTF-8 (65001)
     Set tempWs = workbookCombined.Sheets.Add
     For i = 1 To 100
-        colTypes(i) = 2 ' 2 = xlTextFormat
+        colTypes(i) = 2 ' 2 = xlTextFormat (Importa todo estrictamente como texto plano)
     Next i
 
     Set qt = tempWs.QueryTables.Add(Connection:="TEXT;" & latestFile, Destination:=tempWs.Range("A1"))
     With qt
+        .TextFilePlatform = 65001 ' Forzar UTF-8 para limpiar caracteres invisibles (BOM)
         .TextFileParseType = xlDelimited
-        .TextFileCommaDelimiter = True
+        .TextFileSemicolonDelimiter = True ' Delimitador por punto y coma
+        .TextFileCommaDelimiter = False
         .TextFileColumnDataTypes = colTypes
         .Refresh BackgroundQuery:=False
     End With
@@ -55,37 +58,47 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
     csvLastRow = tempWs.Cells(tempWs.Rows.Count, 1).End(xlUp).row
     Set combinedSheet = workbookCombined.Sheets(1)
     
-    ' Mapeo de columnas
-    csvTitleCol = Application.Match("Training Title", tempWs.Rows(1), 0)
-    csvStatusCol = Application.Match("Training Record Status", tempWs.Rows(1), 0)
-    csvUserIDCol = Application.Match("User - Corporate ID", tempWs.Rows(1), 0)
-    csvDateCol = Application.Match("Training Completion Date", tempWs.Rows(1), 0)
+    ' 3. BÚSQUEDA INTEGRAL DE COLUMNAS (Inmune a errores de coincidencia exacta)
+    csvTitleCol = Empty: csvStatusCol = Empty: csvUserIDCol = Empty: csvDateCol = Empty
+    For col = 1 To tempWs.Cells(1, tempWs.Columns.Count).End(xlToLeft).Column
+        headerText = tempWs.Cells(1, col).Value
+        If InStr(headerText, "Training Title") > 0 Then csvTitleCol = col
+        If InStr(headerText, "Training Record Status") > 0 Then csvStatusCol = col
+        If InStr(headerText, "User - Corporate ID") > 0 Then csvUserIDCol = col
+        If InStr(headerText, "Training Completion Date") > 0 Then csvDateCol = col
+    Next col
 
-    combinedTitleCol = Application.Match("Training - Training title", combinedSheet.Rows(1), 0)
-    combinedStatusCol = Application.Match("Training record - Training record status", combinedSheet.Rows(1), 0)
-    combinedUserIDCol = Application.Match("User - User ID", combinedSheet.Rows(1), 0)
-    combinedDateCol = Application.Match("Training record - Training record completed date", combinedSheet.Rows(1), 0)
+    combinedTitleCol = Empty: combinedStatusCol = Empty: combinedUserIDCol = Empty: combinedDateCol = Empty
+    For col = 1 To combinedSheet.Cells(1, combinedSheet.Columns.Count).End(xlToLeft).Column
+        headerText = combinedSheet.Cells(1, col).Value
+        If InStr(headerText, "Training - Training title") > 0 Then combinedTitleCol = col
+        If InStr(headerText, "Training record - Training record status") > 0 Then combinedStatusCol = col
+        If InStr(headerText, "User - User ID") > 0 Then combinedUserIDCol = col
+        If InStr(headerText, "Training record - Training record completed date") > 0 Then combinedDateCol = col
+    Next col
 
-    If IsError(csvStatusCol) Or IsError(csvUserIDCol) Or IsError(csvTitleCol) Or IsError(csvDateCol) Then
-        MsgBox "Error: No se han encontrado las columnas requeridas en el archivo CSV.", vbCritical
+    ' Verificar que se mapearon todas las columnas críticas
+    If IsEmpty(csvTitleCol) Or IsEmpty(csvStatusCol) Or IsEmpty(csvUserIDCol) Or IsEmpty(csvDateCol) Or _
+       IsEmpty(combinedTitleCol) Or IsEmpty(combinedStatusCol) Or IsEmpty(combinedUserIDCol) Or IsEmpty(combinedDateCol) Then
+        MsgBox "Error crítico: No se encontraron las columnas necesarias en los encabezados.", vbCritical
         GoTo CleanExit
     End If
 
-    ' 3. PROCESAR Y CARGAR CSV AL DICCIONARIO
+    ' 4. PROCESAR Y CARGAR CSV AL DICCIONARIO CON PARSEO MANUAL DE FECHAS
     Set csvData = CreateObject("Scripting.Dictionary")
     
     For i = 2 To csvLastRow
-        Dim st As String: st = Trim(CStr(tempWs.Cells(i, CLng(csvStatusCol)).Value))
+        Dim st As String: st = Trim(CStr(tempWs.Cells(i, CInt(csvStatusCol)).Value))
         
-        ' Validación de estado más flexible frente a espacios o variaciones de caracteres
+        ' Filtro de estados válido para "Completed", "Registered" o "Completed (Equivalent)"
         If InStr(1, st, "Completed", vbTextCompare) > 0 Or InStr(1, st, "Registered", vbTextCompare) > 0 Then
             
-            ' NORMALIZACIÓN DE ID (Elimina ceros iniciales si el ID es puramente numérico)
-            cleanCSVId = Trim(CStr(tempWs.Cells(i, CLng(csvUserIDCol)).Value))
+            ' Normalizar ID eliminando ceros a la izquierda
+            cleanCSVId = Trim(CStr(tempWs.Cells(i, CInt(csvUserIDCol)).Value))
             If IsNumeric(cleanCSVId) Then cleanCSVId = CStr(Val(cleanCSVId))
             
-            csvKey = cleanCSVId & "|" & Trim(CStr(tempWs.Cells(i, CLng(csvTitleCol)).Value))
-            rawVal = Trim(tempWs.Cells(i, CLng(csvDateCol)).Value)
+            csvKey = cleanCSVId & "|" & Trim(CStr(tempWs.Cells(i, CInt(csvTitleCol)).Value))
+            rawVal = Trim(tempWs.Cells(i, CInt(csvDateCol)).Value)
             
             If rawVal <> "" Then
                 datePart = IIf(InStr(rawVal, " ") > 0, Split(rawVal, " ")(0), rawVal)
@@ -94,21 +107,15 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
                 If sep <> "" Then
                     parts = Split(datePart, sep)
                     If UBound(parts) = 2 Then
-                        ' DETECTOR INTELIGENTE DE ESTRUCTURA DE FECHA
+                        ' Estructura inteligente para detectar si el año viene primero (YYYY-MM-DD) o al final
                         If Len(parts(0)) = 4 Then
-                            ' Formato tipo YYYY-MM-DD
-                            y = Val(parts(0))
-                            m = Val(parts(1))
-                            d = Val(parts(2))
+                            y = Val(parts(0)): m = Val(parts(1)): d = Val(parts(2))
                         Else
-                            ' Formato tipo DD/MM/YYYY o MM/DD/YYYY
-                            d = Val(parts(0))
-                            m = Val(parts(1))
-                            y = Val(parts(2))
+                            d = Val(parts(0)): m = Val(parts(1)): y = Val(parts(2))
                             If y < 100 Then y = IIf(y >= 30, 1900 + y, 2000 + y)
                         End If
                         
-                        ' Control de límites lógicos
+                        ' Creación limpia del número de serie de fecha nativo de Excel
                         If m >= 1 And m <= 12 And d >= 1 And d <= 31 Then
                             csvData(csvKey) = DateSerial(y, m, d)
                         End If
@@ -118,31 +125,31 @@ Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workboo
         End If
     Next i
 
-    ' 4. ACTUALIZAR HOJA PRINCIPAL (Combined)
+    ' 5. ACTUALIZAR ARCHIVO BASE (Combined)
     Set execWs = ThisWorkbook.Sheets("Ejecutar")
     courseList = execWs.Range("G2", execWs.Cells(execWs.Rows.Count, "G").End(xlUp)).Value
-    combinedLastRow = combinedSheet.Cells(combinedSheet.Rows.Count, CLng(combinedTitleCol)).End(xlUp).row
+    combinedLastRow = combinedSheet.Cells(combinedSheet.Rows.Count, CInt(combinedTitleCol)).End(xlUp).row
 
     For i = 2 To combinedLastRow
-        ' NORMALIZACIÓN DE ID EN LA HOJA DESTINO
-        cleanCombinedId = Trim(CStr(combinedSheet.Cells(i, CLng(combinedUserIDCol)).Value))
+        cleanCombinedId = Trim(CStr(combinedSheet.Cells(i, CInt(combinedUserIDCol)).Value))
         If IsNumeric(cleanCombinedId) Then cleanCombinedId = CStr(Val(cleanCombinedId))
 
         For j = LBound(courseList, 1) To UBound(courseList, 1)
             course = Trim(CStr(courseList(j, 1)))
             
-            If InStr(1, CStr(combinedSheet.Cells(i, CLng(combinedTitleCol)).Value), course, vbTextCompare) > 0 Then
+            If InStr(1, CStr(combinedSheet.Cells(i, CInt(combinedTitleCol)).Value), course, vbTextCompare) > 0 Then
                 csvKey = cleanCombinedId & "|" & course
                 
                 If csvData.Exists(csvKey) Then
                     newDate = csvData(csvKey)
-                    oldDate = combinedSheet.Cells(i, CLng(combinedDateCol)).Value
+                    oldDate = combinedSheet.Cells(i, CInt(combinedDateCol)).Value
                     
+                    ' Si la fecha es nueva o más reciente, se vuelca
                     If Not IsDate(oldDate) Or newDate > CDate(oldDate) Then
-                        combinedSheet.Cells(i, CLng(combinedStatusCol)).Value = "Completed"
-                        combinedSheet.Cells(i, CLng(combinedDateCol)).Value = newDate
-                        combinedSheet.Cells(i, CLng(combinedDateCol)).NumberFormat = "dd/mm/yyyy"
-                        combinedSheet.Cells(i, CLng(combinedDateCol)).Interior.Color = RGB(255, 255, 0)
+                        combinedSheet.Cells(i, CInt(combinedStatusCol)).Value = "Completed"
+                        combinedSheet.Cells(i, CInt(combinedDateCol)).Value = newDate
+                        combinedSheet.Cells(i, CInt(combinedDateCol)).NumberFormat = "dd/mm/yyyy"
+                        combinedSheet.Cells(i, CInt(combinedDateCol)).Interior.Color = RGB(255, 255, 0)
                     End If
                 End If
             End If
