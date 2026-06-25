@@ -1,0 +1,62 @@
+' 1. NORMALIZAR FECHAS EN EL CSV
+If Not IsError(csvDateCol) Then
+    For i = 2 To csvLastRow
+        v = csvWs.Cells(i, CLng(csvDateCol)).Value2
+        parsed = Empty
+
+        If Not IsError(v) And Not IsEmpty(v) Then
+            s = Trim$(CStr(v))
+
+            If Len(s) > 0 Then
+                ' Extraer solo la parte de fecha (sin hora)
+                datePart = IIf(InStr(s, " ") > 0, Split(s, " ")(0), s)
+
+                sep = IIf(InStr(datePart, "/") > 0, "/", _
+                      IIf(InStr(datePart, "-") > 0, "-", ""))
+
+                If sep <> "" Then
+                    parts = Split(datePart, sep)
+
+                    If UBound(parts) = 2 Then
+                        Dim p0 As Long, p1 As Long, p2 As Long
+                        p0 = Val(parts(0))
+                        p1 = Val(parts(1))
+                        p2 = Val(parts(2))
+
+                        If p2 < 100 Then p2 = IIf(p2 >= 30, 1900 + p2, 2000 + p2)
+
+                        ' DETECCIÓN AUTOMÁTICA DE FORMATO:
+                        ' Si el primer número es > 12, SOLO puede ser dd-mm-yyyy
+                        ' Si el primer número es <= 12, comprobamos si el segundo > 12
+                        '   → entonces es mm-dd-yyyy y hay que invertir
+                        ' Si ambos son <= 12, asumimos dd-mm-yyyy (formato estándar)
+
+                        If p0 > 12 Then
+                            ' Claramente dd-mm-yyyy → day=p0, month=p1
+                            d = p0: m = p1: y = p2
+                        ElseIf p1 > 12 Then
+                            ' Claramente mm-dd-yyyy → invertir: day=p1, month=p0
+                            d = p1: m = p0: y = p2
+                        Else
+                            ' Ambos <= 12: ambiguo, asumimos dd-mm-yyyy (formato estándar)
+                            d = p0: m = p1: y = p2
+                        End If
+
+                        If d >= 1 And d <= 31 And m >= 1 And m <= 12 Then
+                            parsed = DateSerial(y, m, d)
+                        End If
+                    End If
+
+                ElseIf IsDate(datePart) Then
+                    ' Fallback: dejar que VBA lo interprete
+                    parsed = CDate(datePart)
+                End If
+            End If
+        End If
+
+        If Not IsEmpty(parsed) Then
+            csvWs.Cells(i, CLng(csvDateCol)).Value = parsed
+            csvWs.Cells(i, CLng(csvDateCol)).NumberFormat = "dd/mm/yyyy"
+        End If
+    Next i
+End If
