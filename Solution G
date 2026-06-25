@@ -1,0 +1,175 @@
+Sub OpenLatestCSVAndConvertToColumns(name As String, workbookCombined As Workbook)
+
+    Dim folderPath As String, latestFile As String, latestDate As Date
+    Dim fso As Object, fil As Object
+    Dim csvWs As Worksheet, combinedSheet As Worksheet, execWs As Worksheet
+    Dim csvLastRow As Long, combinedLastRow As Long, i As Long, j As Long
+    Dim csvTitleCol As Variant, csvStatusCol As Variant, csvUserIDCol As Variant, csvDateCol As Variant
+    Dim combinedTitleCol As Variant, combinedStatusCol As Variant, combinedUserIDCol As Variant, combinedDateCol As Variant
+    Dim csvData As Object, csvKey As String, courseList As Variant, course As Variant
+    Dim newDate As Date, oldDate As Variant, v As Variant, s As String, datePart As String, sep As String
+    Dim parts() As String, m As Long, d As Long, y As Long, parsed As Variant
+    Dim p0 As Long, p1 As Long ' Nuevas variables para corregir la inversión de fechas
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+    On Error GoTo CleanFail
+
+    folderPath = PCM_PATH
+    latestFile = "": latestDate = 0
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    
+    For Each fil In fso.GetFolder(folderPath).Files
+        If fil.name Like "Training History - Raw Data view*" And fil.name Like "*.csv" Then
+            If fil.DateLastModified > latestDate Then
+                latestDate = fil.DateLastModified
+                latestFile = fil.Path
+            End If
+        End If
+    Next fil
+
+    If latestFile = "" Then
+        MsgBox "No se encontró ningún archivo CSV.", vbExclamation
+        GoTo CleanExit
+    End If
+
+    Workbooks.Open fileName:=latestFile
+    Set csvWs = ActiveSheet
+    csvLastRow = csvWs.Cells(csvWs.Rows.Count, 1).End(xlUp).row
+
+    ' Convertir a columnas si es necesario
+    If csvWs.Cells(1, 1).Text Like "*,*" Then
+        csvWs.Range("A1:Z" & csvLastRow).TextToColumns Destination:=csvWs.Range("A1"), DataType:=xlDelimited, Comma:=True
+    End If
+
+    Set combinedSheet = workbookCombined.Sheets(1)
+    
+    ' Mapeo de columnas
+    csvTitleCol = Application.Match("Training Title", csvWs.Rows(1), 0)
+    csvStatusCol = Application.Match("Training Record Status", csvWs.Rows(1), 0)
+    csvUserIDCol = Application.Match("User - Corporate ID", csvWs.Rows(1), 0)
+    csvDateCol = Application.Match("Training Completion Date", csvWs.Rows(1), 0)
+
+    combinedTitleCol = Application.Match("Training - Training title", combinedSheet.Rows(1), 0)
+    combinedStatusCol = Application.Match("Training record - Training record status", combinedSheet.Rows(1), 0)
+    combinedUserIDCol = Application.Match("User - User ID", combinedSheet.Rows(1), 0)
+    combinedDateCol = Application.Match("Training record - Training record completed date", combinedSheet.Rows(1), 0)
+
+    ' =======================================================
+    ' 1. NORMALIZAR FECHAS EN EL CSV
+    ' =======================================================
+    If Not IsError(csvDateCol) Then
+        For i = 2 To csvLastRow
+            ' Usamos .Text en lugar de .Value2 para extraer exactamente el texto literal,
+            ' ignorando conversiones silenciosas fallidas hechas por Excel.
+            s = Trim$(csvWs.Cells(i, CLng(csvDateCol)).Text)
+            parsed = Empty
+            
+            If Len(s) > 0 Then
+                datePart = IIf(InStr(s, " ") > 0, Split(s, " ")(0), s)
+                sep = IIf(InStr(datePart, "/") > 0, "/", IIf(InStr(datePart, "-") > 0, "-", ""))
+                
+                If sep <> "" Then
+                    parts = Split(datePart, sep)
+                    If UBound(parts) = 2 Then
+                        p0 = Val(parts(0))
+                        p1 = Val(parts(1))
+                        y = Val(parts(2))
+                        
+                        If y < 100 Then y = IIf(y >= 30, 1900 + y, 2000 + y)
+                        
+                        ' --- LÓGICA DE CORRECCIÓN: MM-DD-YYYY a DD-MM-YYYY ---
+                        If p1 > 12 Then
+                            ' Si el bloque central > 12, sabemos forzosamente que ese es el Día.
+                            ' Significa que el formato original era mm-dd-yyyy.
+                            m = p0
+                            d = p1
+                        ElseIf p0 > 12 Then
+                            ' Si el bloque inicial > 12, sabemos que ese es el Día.
+                            ' Significa que ya venía bien (dd-mm-yyyy).
+                            d = p0
+                            m = p1
+                        Else
+                            ' Si ambos son menores o iguales a 12 y el archivo suele venir volcado en mm-dd-yyyy,
+                            ' forzamos la lectura asumiendo mm-dd-yyyy.
+                            m = p0
+                            d = p1
+                        End If
+                        
+                        ' Verificamos que sea un mes/día válidos antes de crear la fecha serial
+                        If d >= 1 And d <= 31 And m >= 1 And m <= 12 Then 
+                            parsed = DateSerial(y, m, d)
+                        End If
+                    End If
+                ElseIf IsDate(s) Then
+                    parsed = CDate(s)
+                End If
+            End If
+            
+            If Not IsEmpty(parsed) Then 
+                csvWs.Cells(i, CLng(csvDateCol)).Value = parsed
+                csvWs.Cells(i, CLng(csvDateCol)).NumberFormat = "dd-mm-yyyy"
+            End If
+        Next i
+    End If
+
+    ' =======================================================
+    ' 2. CARGAR CSV AL DICCIONARIO (Buscando los 3 estados)
+    ' =======================================================
+    Set csvData = CreateObject("Scripting.Dictionary")
+    For i = 2 To csvLastRow
+        Dim st As String: st = CStr(csvWs.Cells(i, CLng(csvStatusCol)).Value)
+        
+        ' Verificamos si es "Completed", "Registered" o "Completed (Equivalent)"
+        If InStr(1, st, "Completed", vbTextCompare) > 0 Or st = "Registered" Then
+            csvKey = Trim(CStr(csvWs.Cells(i, CLng(csvUserIDCol)).Value)) & "|" & Trim(CStr(csvWs.Cells(i, CLng(csvTitleCol)).Value))
+            csvData(csvKey) = csvWs.Cells(i, CLng(csvDateCol)).Value
+        End If
+    Next i
+
+    ' =======================================================
+    ' 3. ACTUALIZAR ARCHIVO BASE (Combined)
+    ' =======================================================
+    Set execWs = ThisWorkbook.Sheets("Ejecutar")
+    courseList = execWs.Range("G2", execWs.Cells(execWs.Rows.Count, "G").End(xlUp)).Value
+    combinedLastRow = combinedSheet.Cells(combinedSheet.Rows.Count, CLng(combinedTitleCol)).End(xlUp).row
+
+    For i = 2 To combinedLastRow
+        For j = LBound(courseList, 1) To UBound(courseList, 1)
+            course = Trim(CStr(courseList(j, 1)))
+            
+            ' Si el curso coincide
+            If InStr(1, CStr(combinedSheet.Cells(i, CLng(combinedTitleCol)).Value), course, vbTextCompare) > 0 Then
+                csvKey = Trim(CStr(combinedSheet.Cells(i, CLng(combinedUserIDCol)).Value)) & "|" & course
+                
+                ' Si el usuario/curso está en el diccionario del CSV
+                If csvData.Exists(csvKey) Then
+                    newDate = CDate(csvData(csvKey))
+                    oldDate = combinedSheet.Cells(i, CLng(combinedDateCol)).Value
+                    
+                    ' COMPROBACIÓN: Si la fecha es más reciente (o no había fecha antes)
+                    If Not IsDate(oldDate) Or newDate > CDate(oldDate) Then
+                        combinedSheet.Cells(i, CLng(combinedStatusCol)).Value = "Completed"
+                        combinedSheet.Cells(i, CLng(combinedDateCol)).Value = newDate
+                        
+                        ' APLICAMOS FORMATO ESTÁNDAR DEMANDADO: dd-mm-yyyy
+                        combinedSheet.Cells(i, CLng(combinedDateCol)).NumberFormat = "dd-mm-yyyy"
+                        combinedSheet.Cells(i, CLng(combinedDateCol)).Interior.Color = RGB(255, 255, 0)
+                    End If
+                End If
+            End If
+        Next j
+    Next i
+
+    csvWs.Parent.Close SaveChanges:=False
+
+CleanExit:
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    Application.Calculation = xlCalculationManual
+    Exit Sub
+CleanFail:
+    MsgBox "Error: " & Err.Description
+    Resume CleanExit
+End Sub
