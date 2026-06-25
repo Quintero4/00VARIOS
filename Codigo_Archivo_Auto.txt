@@ -1,0 +1,112 @@
+Private Sub Workbook_Open()
+    Dim wb As Workbook
+    Dim archivo As String
+    Dim macro As String
+    Dim rutaLog As String
+    Dim fso As Object
+    Dim logFile As Object
+    Dim mensaje As String
+    Dim archivoLog As String
+    Dim calendarioWb As Workbook
+    Dim calendarioWs As Worksheet
+    Dim fechaActual As Date
+    Dim ultimaFila As Long
+    Dim celda As Range
+    Dim fechaEncontrada As Boolean
+
+    ' Ruta del archivo a abrir (ajusta según sea necesario)
+    archivo = "\\Spi60001.eadscasa.casa.corp\a400m san pablo\Lean_Manufacturing\4.- Innovation\3. Projects info\13. Visual Plant\Pantallas N2\Code\Cálculos Dashboard N2.xlsm"
+
+    ' Nombre de la macro que se ejecutará dentro del archivo abierto
+    macro = "'Cálculos Dashboard N2.xlsm'!Principal"
+
+    ' Ruta del archivo de log (ajusta según sea necesario)
+    archivoLog = "\\Spi60001.eadscasa.casa.corp\a400m san pablo\Lean_Manufacturing\4.- Innovation\3. Projects info\13. Visual Plant\Pantallas N2\Code\Log_Proceso.txt"
+
+    ' Ruta del archivo de calendario
+    Dim calendarioArchivo As String
+    calendarioArchivo = "\\Spi60001.eadscasa.casa.corp\a400m san pablo\Lean_Manufacturing\10.- PCM\28. PCM\1.1.1 Macro Actualizacion Planificacion Formacion\Macro 2.0\Planificaciones auto\Calendario.xlsx"
+
+    ' Inicializar el sistema de archivos
+    Set fso = CreateObject("Scripting.FileSystemObject")
+
+    ' Abrir el archivo de calendario en modo solo lectura
+    On Error Resume Next
+    Set calendarioWb = Workbooks.Open(Filename:=calendarioArchivo, ReadOnly:=True)
+    On Error GoTo 0
+
+    ' Verificar si el archivo de calendario se abrió correctamente
+    If calendarioWb Is Nothing Then
+        mensaje = Format(Now, "yyyy-mm-dd HH:MM:SS") & " - Error: No se pudo abrir el archivo de calendario " & calendarioArchivo
+        GoTo EscribirLog
+    End If
+
+    Set calendarioWs = calendarioWb.Sheets("DIAS NO LAB")
+    fechaActual = Date
+    fechaEncontrada = False
+
+    ' Encontrar la última fila con datos en la columna A
+    ultimaFila = calendarioWs.Cells(calendarioWs.Rows.Count, "A").End(xlUp).Row
+
+    ' Verificar si la fecha actual está en la columna A
+    For Each celda In calendarioWs.Range("A1:A" & ultimaFila)
+        If Not IsEmpty(celda.Value) Then
+            If celda.Value = fechaActual Then
+                fechaEncontrada = True
+                Exit For
+            End If
+        End If
+    Next celda
+
+    ' Cerrar el archivo de calendario
+    calendarioWb.Close SaveChanges:=False
+
+    ' Si la fecha actual no está en la lista de días no laborables, proceder con la macro principal
+    If Not fechaEncontrada Then
+        ' Abrir el archivo en modo solo lectura
+        On Error Resume Next
+        Set wb = Workbooks.Open(Filename:=archivo, ReadOnly:=True)
+        On Error GoTo 0
+
+        ' Verificar si el archivo se abrió correctamente
+        If wb Is Nothing Then
+            mensaje = Format(Now, "yyyy-mm-dd HH:MM:SS") & " - Error: No se pudo abrir el archivo " & archivo
+            GoTo EscribirLog
+        End If
+
+        ' Ejecutar la macro
+        On Error Resume Next
+        Application.Run macro
+        If Err.Number = 0 Then
+            mensaje = Format(Now, "yyyy-mm-dd HH:MM:SS") & " - Éxito: Macro ejecutada correctamente en " & archivo
+        Else
+            mensaje = Format(Now, "yyyy-mm-dd HH:MM:SS") & " - Error: Falló la ejecución de la macro en " & archivo & " - " & Err.Description
+        End If
+        On Error GoTo 0
+
+        ' Cerrar el archivo destino sin guardar cambios
+        wb.Close SaveChanges:=False
+    Else
+        mensaje = Format(Now, "yyyy-mm-dd HH:MM:SS") & " - Información: No se ejecutó la macro porque hoy es un día no laborable."
+    End If
+
+EscribirLog:
+    ' Escribir en el archivo de log
+    If fso.FileExists(archivoLog) Then
+        Set logFile = fso.OpenTextFile(archivoLog, 8, True) ' Modo Append
+    Else
+        Set logFile = fso.CreateTextFile(archivoLog, True)
+    End If
+
+    ' Escribir mensaje en el log y cerrar el archivo
+    logFile.WriteLine mensaje
+    logFile.Close
+
+    ' Cerrar este archivo sin guardar cambios
+    Application.DisplayAlerts = False
+    If fechaEncontrada = True Then
+        Application.Quit
+    Else
+        ThisWorkbook.Close SaveChanges:=False
+    End If
+End Sub
