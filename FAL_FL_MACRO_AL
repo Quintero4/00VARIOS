@@ -1,0 +1,436 @@
+Option Explicit
+
+Private Const FILTER_MEMBERS = "My_Team_-_Members_List*.xls*"
+Private Const FILTER_ALL_LEARNING = "My Team All Learning*.xls*"
+Private Const FILTER_TEIMS = "Listado de Certificacion Personal - FAL A400M*.xls*"
+Private Const FILTER_ZPC03 = "ZPC03*.xls*"
+Private Const FILTER_CYPER = "CYPEREXT.MDB"
+
+Public Sub ejecucionPrincipal(ByVal plantillaAGenerar As String)
+
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    
+    Dim ficheroMembers, ficheroTrainings, ficheroTEIMS, ficheroZPC03, ficheroCyper As String
+    
+    Dim indicePrimeraFila, indiceUltimaFila, indiceUltimaColumnaCabecera As Integer
+    Dim indicesColumnasMembersListDictionary, indicesColumnasTrainingsDictionary, indiceColumnasFicheroPersonalCertificadoDictionary, _
+    datosPorColumnaDiccionarioFicheroMembersList, datosPorColumnaDiccionarioFicheroTrainings2020, datosPorColumnaDiccionarioFicheroTrainings2022, _
+    datosPorColumnaDiccionarioFicheroTrainings, indiceColumnasFicheroZPC03Dictionary, _
+    siglums, indiceColumnasCursos, cursosMapeados, curriculumMapeados, _
+    datosPorColumnaDiccionarioFicheroPersonalCertificado, listadoCertificados, stations, datosPorColumnaDiccionarioFicheroZPC03, _
+    datosPorcolumnaDiccionarioFicheroZPC03CruzadosconFicheroPersonalCertificado, listadoCompletoIDs, _
+    tiempoHastaCaducidadCertificacion, listadoCursosYEquivalenciaCertificado, listadoCompletoIDUsuarioPorArea, listadoCursos, _
+    datosCyper, listadoWAQA, folderDictionary As New Dictionary
+    
+    Dim listadoUmbrales As Dictionary
+    
+    Dim listadoCursosSinPerfil, datosFicheroTrainings2020, datosFicheroTrainings2022 As Variant
+    Dim nombrePlantilla As String
+    
+    Dim miembrosWorkbook, trainings2020Workbook, trainings2022Workbook, trainingsWorkbook, certifiedPersonalWorkbook, ZPC03Workbook  As Workbook
+    Dim ficheroMiembrosArray() As String
+    Dim ficheroTrainings2020Array() As String
+    Dim ficheroTrainings2022Array() As String
+    Dim ficheroTrainingsArray() As String
+    Dim ficheroTEIMSArray() As String
+    Dim ficheroZPC03Array() As String
+    Dim ficheroCyperArray() As String
+    
+    Dim nombreFicheroMiembros, nombreFicheroTrainings2020, nombreFicheroTrainings2022, nombreFicheroTrainings, nombreFicheroTEIMS, nombreFicheroExtractoZPC03, nombreFicheroCyper As String
+    Dim personalCertificadoDadoDeBajaRuta As String
+    Dim createdFilePath As String
+    Dim userManagerList As Dictionary
+    Dim hanCambiadoColumnas As Boolean
+    Dim nombreFichero As String
+    
+    Dim cyperWS As Workspace
+    Dim cyperDB As DAO.Database
+    Dim cyperRS As DAO.Recordset
+    
+    nombreFichero = plantillaAGenerar
+    
+    Select Case plantillaAGenerar
+        Case "AF":
+            nombrePlantilla = "AF-Plantilla"
+        Case "GST":
+            nombrePlantilla = "GST-Plantilla"
+        Case "FL":
+            nombrePlantilla = "FL-Plantilla"
+    End Select
+    
+    If Not existeHoja(nombrePlantilla) Then
+        GoTo plantillaNoEncontrada
+    End If
+    
+    Set userManagerList = New Dictionary
+           
+    createdFilePath = ThisWorkbook.Path
+    
+    Call actualizarProgressbar(10, "Revisando ficheros de entrada...")
+    
+    '### OBTENER NOMBRE FICHERO ###
+    
+    'Mapear carpetas
+    Set folderDictionary = mapFolders
+    
+    'Members
+    ficheroMembers = getFilePath(folderDictionary, "Members List", FILTER_MEMBERS)
+    ficheroMiembrosArray = Split(ficheroMembers, "\")
+    nombreFicheroMiembros = ficheroMiembrosArray(UBound(ficheroMiembrosArray))
+    
+    'Training
+    ficheroTrainings = getFilePath(folderDictionary, "All Learning Unificado", FILTER_ALL_LEARNING)
+    ficheroTrainingsArray = Split(ficheroTrainings, "\")
+    nombreFicheroTrainings = ficheroTrainingsArray(UBound(ficheroTrainingsArray))
+    
+    'Personal Certificado
+    ficheroTEIMS = getFilePath(folderDictionary, "TEIMS", FILTER_TEIMS)
+    ficheroTEIMSArray = Split(ficheroTEIMS, "\")
+    nombreFicheroTEIMS = ficheroTEIMSArray(UBound(ficheroTEIMSArray))
+    
+    'ZPC03
+    ficheroZPC03 = getFilePath(folderDictionary, "ZPC03", FILTER_ZPC03)
+    ficheroZPC03Array = Split(ficheroZPC03, "\")
+    nombreFicheroExtractoZPC03 = ficheroZPC03Array(UBound(ficheroZPC03Array))
+    
+    'CYPER
+    ficheroCyper = getFilePath(folderDictionary, "CYPER", FILTER_CYPER)
+    ficheroCyperArray = Split(ficheroCyper, "\")
+    nombreFicheroCyper = ficheroCyperArray(UBound(ficheroCyperArray))
+    
+    
+    '### OBTENER COLUMNAS DE FICHEROS ###
+    ThisWorkbook.Activate
+    'Almacenamos en memoria el índice de las columnas que vamos a usar en los distintos ficheros.
+    Sheets("IndicesColumnas").Visible = True
+    Sheets("IndicesColumnas").Activate
+    'Members
+    Set indicesColumnasMembersListDictionary = getIndiceColumnas("My Team Members")
+    'Trainings
+    Set indicesColumnasTrainingsDictionary = getIndiceColumnas("Trainings")
+    'Teims
+    Set indiceColumnasFicheroPersonalCertificadoDictionary = getIndiceColumnas("TEIMS")
+    'ZPC03
+    Set indiceColumnasFicheroZPC03Dictionary = getIndiceColumnas("Extracto ZPC03")
+    
+    Sheets("IndicesColumnas").Visible = False
+    
+    'Comprobamos que los ficheros son los que queremos y las columnas no han cambiado
+    '' Evitar que salten avisos de guardar.
+    Application.DisplayAlerts = False
+    
+    '### COMPROBAR COLUMNAS ###
+    'Members
+    Set miembrosWorkbook = Workbooks.Open(ficheroMembers)
+    indicePrimeraFila = 1
+    hanCambiadoColumnas = checkEsFicheroMiembros(indicesColumnasMembersListDictionary, indicePrimeraFila)
+    If hanCambiadoColumnas Then
+        GoTo ficheroPersonalModificado
+    End If
+    miembrosWorkbook.Close SaveChanges:=False
+    
+    'Trainings
+    Set trainingsWorkbook = Workbooks.Open(ficheroTrainings)
+    hanCambiadoColumnas = checkColumnasFicheroTrainings(indicesColumnasTrainingsDictionary)
+    If hanCambiadoColumnas Then
+        GoTo ficheroTrainingsModificado
+    End If
+    trainingsWorkbook.Close SaveChanges:=False
+    
+    'Teims
+    
+     'Crear Columna CER
+    
+            Dim currentWorkbook As Workbook
+            Dim dataMatrix As Variant
+            Dim lastRow As Long
+            Dim k As Long, l As Long
+            Dim lookupValue As Variant
+            Dim found As Boolean
+            Dim ws As Worksheet
+            
+            
+                ' Create a matrix of data from the "QAs" sheet of the current workbook
+                Set currentWorkbook = ThisWorkbook
+                With currentWorkbook.Sheets("QAs")
+                    lastRow = .Cells(.Rows.count, "A").End(xlUp).Row
+                    dataMatrix = .Range("A1:E" & lastRow).Value
+                End With
+    
+    
+    Set certifiedPersonalWorkbook = Workbooks.Open(ficheroTEIMS)
+    
+                ' Populate the column Y
+                Set ws = certifiedPersonalWorkbook.Sheets(1) ' Assuming the data is in the first sheet
+               
+                ws.Cells(11, "Y").Value = "Código CER"
+                
+                
+                ' Loop through each row in the new workbook starting from row 12
+                For k = 12 To ws.Cells(ws.Rows.count, "A").End(xlUp).Row
+                    lookupValue = ws.Cells(k, "A").Value
+                    found = False
+                    l = 1
+            
+                    ' Loop through the dataMatrix to find a match
+                    For l = 1 To UBound(dataMatrix, 1)
+                        If dataMatrix(l, 1) = lookupValue Then
+                            ws.Cells(k, "Y").Value = dataMatrix(l, 5) ' Fifth column of the matrix (E)
+                            found = True
+                            Exit For
+                        End If
+                    Next l
+            
+                    ' If no match is found, you can optionally handle it (e.g., leave the cell empty or set a default value)
+                    If Not found Then
+                        ws.Cells(k, "Y").Value = "" ' or set a default value
+                    End If
+                Next k
+                            
+                
+    
+    
+    hanCambiadoColumnas = checkColumnasFicheroTEIMS(indiceColumnasFicheroPersonalCertificadoDictionary)
+    If hanCambiadoColumnas Then
+        GoTo ficheroTEIMSModificado
+    End If
+    certifiedPersonalWorkbook.Close SaveChanges:=True
+    
+    'ZPC03
+    Set ZPC03Workbook = Workbooks.Open(ficheroZPC03, ReadOnly:=True)
+    hanCambiadoColumnas = checkEsFicheroZPC03Workbook(indiceColumnasFicheroZPC03Dictionary)
+    If hanCambiadoColumnas Then
+        GoTo ficheroZPC03WorkbookModificado
+    End If
+    ZPC03Workbook.Close SaveChanges:=False
+    
+    'CYPER
+    If Not nombreFicheroCyper = "CYPEREXT.MDB" Then
+        GoTo ficheroCyperErroneo
+    End If
+    
+
+    ThisWorkbook.Activate
+    Set siglums = getSiglums(plantillaAGenerar)
+    Set stations = getStations()
+            
+    Sheets(nombrePlantilla).Visible = True
+    Sheets(nombrePlantilla).Activate
+    indiceUltimaColumnaCabecera = Cells(2, Columns.count).End(xlToLeft).column
+    'listadoCursos es una variable que almacena la columna SÓLO DE LOS CURSOS de la plantilla que corresponda.
+    Set listadoCursos = getListadoCursos(nombrePlantilla)
+    'listadoCursos es una variable que almacena la columna SÓLO DE LOS CURSOS SIN PERFIL de la plantilla que corresponda.
+    Set listadoCursosSinPerfil = getListadoCursosSinPerfil(nombrePlantilla)
+    'indiceColumnasCursos es una variable que almacena la columna de todos los cursos, certificados y perfiles de la plantilla que corresponda.
+    Set indiceColumnasCursos = getCursosPlantilla(nombrePlantilla)
+    'cursosMapeados es una variable que contiene los cursos y sus equivalencias.
+    Set cursosMapeados = getCursosMapeados()
+    'curriculumMapeados es una variable que contiene los curriculum de cursos online y sus equivalencias.
+    Set curriculumMapeados = getCurriculumMapeados()
+    'Variable que contiene el nombre de los cursos y su identificador corto
+    Set listadoCertificados = getCertificadosPlantilla(nombrePlantilla)
+    'Variable que contiene los códigos y posición de las WA_QA
+    Set listadoWAQA = getWAQAPlantilla(nombrePlantilla)
+    'Variable que contiene la duración para la caducidad de las certificaciones.
+    Set tiempoHastaCaducidadCertificacion = getTiempoHastaCaducidadCertificacion()
+    Set listadoCursosYEquivalenciaCertificado = getListadoCursosYEquivalenciaCertificado(nombrePlantilla)
+    'Listado completo de id´s de usuarios.
+    Set listadoCompletoIDs = getListadoIDs()
+    'Listado Ubrales Minimos
+    Sheets(nombrePlantilla).Activate
+
+    Set listadoUmbrales = getListadoUmbrales(indiceUltimaColumnaCabecera, plantillaAGenerar)
+    
+    Call actualizarProgressbar(50, "Obteniendo datos de los ficheros...")
+    
+    '### OBTENER INFORMACIÓN ###
+    
+    'Cyper
+    Set datosCyper = getImportarDatosCyper(ficheroCyper)
+    
+    'MiembrosWorkbook
+    Set miembrosWorkbook = Workbooks.Open(ficheroMembers)
+    miembrosWorkbook.Activate
+    Sheets(1).Activate
+    indicePrimeraFila = indicePrimeraFila + 1
+    indiceUltimaFila = ActiveSheet.Range("A" & Rows.count).End(xlUp).Row
+    Set datosPorColumnaDiccionarioFicheroMembersList = getDatosFicheroMembersList(indicesColumnasMembersListDictionary, indicePrimeraFila, indiceUltimaFila, siglums)
+    Set userManagerList = getUserManagerList(indicesColumnasMembersListDictionary, listadoCompletoIDs, indicePrimeraFila)
+    Set listadoCompletoIDUsuarioPorArea = getListadoCompletoPersonasActivas(datosPorColumnaDiccionarioFicheroMembersList, listadoCompletoIDs, siglums, indicesColumnasMembersListDictionary)
+    miembrosWorkbook.Saved = True
+    miembrosWorkbook.Close SaveChanges:=False
+    
+    'TrainingsWorkbook
+    Set trainingsWorkbook = Workbooks.Open(ficheroTrainings)
+    trainingsWorkbook.Activate
+    Set datosPorColumnaDiccionarioFicheroTrainings = getImportarDatosFicheroTraining(indicesColumnasTrainingsDictionary)
+    trainingsWorkbook.Saved = True
+    trainingsWorkbook.Close SaveChanges:=False
+  
+    'CertifiedPersonalWorkbook
+    Set certifiedPersonalWorkbook = Workbooks.Open(ficheroTEIMS)
+    certifiedPersonalWorkbook.Activate
+    Set datosPorColumnaDiccionarioFicheroPersonalCertificado = getImportarDatosFicheroPersonalCertificado(indiceColumnasFicheroPersonalCertificadoDictionary)
+    certifiedPersonalWorkbook.Saved = True
+    certifiedPersonalWorkbook.Close SaveChanges:=False
+    
+    'ZPC03Workbook
+    Set ZPC03Workbook = Workbooks.Open(ficheroZPC03, ReadOnly:=True)
+    ZPC03Workbook.Activate
+    Set datosPorColumnaDiccionarioFicheroZPC03 = getImportarDatosFicheroZPC03(indiceColumnasFicheroZPC03Dictionary, listadoCompletoIDUsuarioPorArea("IdentificadorUsuario"))
+    ZPC03Workbook.Saved = True
+    ZPC03Workbook.Close SaveChanges:=False
+    
+    Set datosPorcolumnaDiccionarioFicheroZPC03CruzadosconFicheroPersonalCertificado = getDatosPorcolumnaDiccionarioFicheroZPC03CruzadosconFicheroPersonalCertificado(datosPorColumnaDiccionarioFicheroZPC03, datosPorColumnaDiccionarioFicheroPersonalCertificado)
+
+    
+    Call actualizarProgressbar(100, "Rellenando hoja...")
+       
+    '### RELLENAR HOJA ###
+    Call rellenarHoja(plantillaAGenerar, nombrePlantilla, siglums, datosPorColumnaDiccionarioFicheroTrainings, _
+                    datosPorColumnaDiccionarioFicheroMembersList, indicesColumnasMembersListDictionary, userManagerList, _
+                    datosPorcolumnaDiccionarioFicheroZPC03CruzadosconFicheroPersonalCertificado, cursosMapeados, curriculumMapeados, _
+                    listadoCertificados, stations, listadoCompletoIDs, listadoCursosYEquivalenciaCertificado, tiempoHastaCaducidadCertificacion, _
+                    indiceUltimaColumnaCabecera, plantillaAGenerar, listadoCursos, indiceColumnasCursos, indiceUltimaColumnaCabecera, _
+                    listadoCursosSinPerfil, datosCyper, listadoWAQA, listadoUmbrales)
+    
+    Call actualizarProgressbar(190, "Generando plantilla...")
+
+    Call generarPlantilla(plantillaAGenerar, createdFilePath, nombreFichero, nombrePlantilla, siglums)
+    
+    Call actualizarProgressbar(200, "Completado.")
+    Call finalizarProgressbar
+    MsgBox "Ejecución Finalizada"
+    ThisWorkbook.Saved = True
+    ThisWorkbook.Close
+    GoTo FIN
+    
+plantillaNoEncontrada:
+    MsgBox "No se ha encontrado la plantilla " & nombrePlantilla
+    GoTo FIN_ERROR
+    
+ficheroPersonalModificado:
+    MsgBox "El fichero del personal no posee la información esperada"
+    Call cerrarFichero(nombreFicheroMiembros)
+    GoTo FIN_ERROR
+    
+ficheroTrainingsModificado:
+    MsgBox "El fichero de los trainings no posee la información esperada"
+    Call cerrarFichero(nombreFicheroTrainings)
+    Call cerrarFichero(nombreFicheroTrainings2020)
+    GoTo FIN_ERROR
+    
+ficheroTEIMSModificado:
+    MsgBox "El fichero de TEIMS no posee la información esperada"
+    Call cerrarFichero(nombreFicheroTEIMS)
+    GoTo FIN_ERROR
+    
+ficheroZPC03WorkbookModificado:
+    MsgBox "El fichero de ZPC03 no posee la información esperada"
+    Call cerrarFichero(nombreFicheroExtractoZPC03)
+    GoTo FIN_ERROR
+    
+ficheroCyperErroneo:
+    MsgBox "El fichero de Cyper introducido no corresponde con el esperado (CYPEREXT.MDB)."
+    GoTo FIN_ERROR
+    
+FIN_ERROR:
+    Call finalizarProgressbar
+
+FIN:
+            
+End Sub
+Sub unificarLibrosGST_FL_AF()
+    
+    Dim wsGST As Worksheet, wsAF As Worksheet, wsFL As Worksheet
+    Dim NewBook As Workbook
+    Dim GSTPath As String, AFPath As String, FLPath As String, NewFilePath As String
+    Dim GSTFile As String, AFFile As String, FLFile As String
+    Dim FolderPath As String
+    Dim LatestGST As String, LatestAF As String, LatestFL As String
+    Dim fso As Object, Folder As Object, File As Object
+    Dim LatestDate As Date, FileDate As Date
+    
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+
+    ' Rutas de las carpetas
+    FolderPath = "\\Spi60001.eadscasa.casa.corp\a400m san pablo\Lean_Manufacturing\10.- PCM\28. PCM\1.1.2 Macro Multiskilled\Actualizacion Skill Matrix\"
+    NewFilePath = FolderPath & "Unificar Ficheros\GST_FL_AF.xlsx"
+    
+    ' Inicializar objetos FileSystem
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set Folder = fso.GetFolder(FolderPath)
+
+    ' Encontrar los archivos más recientes
+    LatestDate = 0
+    For Each File In Folder.Files
+        If File.Name Like "GST.xls*" Then
+            FileDate = File.DateLastModified
+            If FileDate > LatestDate Then
+                LatestDate = FileDate
+                LatestGST = File.Name
+            End If
+        End If
+    Next File
+    
+    LatestDate = 0
+    For Each File In Folder.Files
+        If File.Name Like "AF.xls*" Then
+            FileDate = File.DateLastModified
+            If FileDate > LatestDate Then
+                LatestDate = FileDate
+                LatestAF = File.Name
+            End If
+        End If
+    Next File
+    
+    LatestDate = 0
+    For Each File In Folder.Files
+        If File.Name Like "FL.xls*" Then
+            FileDate = File.DateLastModified
+            If FileDate > LatestDate Then
+                LatestDate = FileDate
+                LatestFL = File.Name
+            End If
+        End If
+    Next File
+
+    ' Abrir los libros más recientes
+    GSTPath = FolderPath & LatestGST
+    AFPath = FolderPath & LatestAF
+    FLPath = FolderPath & LatestFL
+    
+    Workbooks.Open GSTPath
+    Set wsGST = Workbooks(LatestGST).Sheets("GST")
+    
+    Workbooks.Open AFPath
+    Set wsAF = Workbooks(LatestAF).Sheets("AF")
+    
+    Workbooks.Open FLPath
+    Set wsFL = Workbooks(LatestFL).Sheets("FL")
+    
+    ' Crear nuevo libro
+    Set NewBook = Workbooks.Add
+    
+    ' Copiar hojas al nuevo libro
+    wsGST.Copy After:=NewBook.Sheets(NewBook.Sheets.count)
+    wsAF.Copy After:=NewBook.Sheets(NewBook.Sheets.count)
+    wsFL.Copy After:=NewBook.Sheets(NewBook.Sheets.count)
+    
+    'Borrar Hoja1 por defecto
+    NewBook.Sheets(1).Delete
+    
+    ' Guardar el nuevo libro en la ubicación especificada
+    NewBook.SaveAs fileName:=NewFilePath
+
+    ' Cerrar libros abiertos
+    Workbooks(LatestGST).Close False
+    Workbooks(LatestAF).Close False
+    Workbooks(LatestFL).Close False
+    
+    ' Informar al usuario
+    MsgBox "El libro GST_FL_AF ha sido creado y guardado en la carpeta : \\Spi60001.eadscasa.casa.corp\a400m san pablo\Lean_Manufacturing\10.- PCM\28. PCM\1.1.2 Multiskilled\Actualizacion Skill Matrix\Unificar Ficheros"
+    
+End Sub
