@@ -1,0 +1,69 @@
+Sub generateFile(ByRef selectedGroups, ByVal selectAll, ByVal separate)
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    Dim workbookCombined As Workbook
+    Dim combinedSheet As Worksheet
+    Dim lastRow As Long, lastColumn As Long
+    Dim targetRow As Long, i As Long
+
+    ' Crear y activar workbook combinado
+    Set workbookCombined = Workbooks.Add
+    Set combinedSheet = workbookCombined.Sheets(1)
+
+    ' Especificar el orden de las columnas en el archivo final
+    Dim columnOrder As Variant
+    columnOrder = Array("User - User last name", "User - User first name", "Training - Training type", "Training - Material type name", _
+                        "Training - Training title", "Training record - Training record status", "Training record - Last training record status change date", _
+                        "Training record - Training record completed date", "Training - Classroom session ID number", "Training - Training starting date", _
+                        "Training - Training end date", "Training record - Passed", "Training record - Curriculum (Training Record) - Curriculum title (training record)", _
+                        "Training record - Curriculum (Training Record) - Curriculum version (training record)", "Training - Training topic", "Training - Training hours", _
+                        "Training - Training price", "User - Supervisory", "User - User ID", "User - Manager - User full name", "Assignment - Assignment created date", _
+                        "Assignment - Assignment created by (name)", "Assignment - Assignment comments", "User - Supervisory ID", "Training - Source - LO root ID")
+
+    ' Agregar encabezados al archivo final
+    combinedSheet.Range("A1").Resize(1, UBound(columnOrder) + 1).Value = columnOrder
+
+    ' Leer datos de los archivos fuente y mapear columnas
+    Call processSourceFile("Before", "My_Team_Learning_before_*.xls*", combinedSheet, columnOrder)
+    Call processSourceFile("2020-2024", "My_Team_Learning_2020-2024*.xls*", combinedSheet, columnOrder)
+    Call processSourceFile("Since", "My_Team_Learning_since_*.xls*", combinedSheet, columnOrder)
+    Call processSourceFile("All_Events", "My_Team_Events*.xls*", combinedSheet, columnOrder, True)
+
+    ' Llamar a la función para abrir el CSV y actualizar workbookCombined
+    Call OpenLatestCSVAndConvertToColumns("YourName", workbookCombined)
+
+    ' =======================================================
+    ' NUEVO: ORDENAR DE MÁS RECIENTE A MÁS ANTIGUO
+    ' =======================================================
+    Dim dateColIndex As Variant
+    Dim sortLastRow As Long
+    
+    ' Buscar dinámicamente la posición de la columna de fecha de completado
+    dateColIndex = Application.Match("Training record - Training record completed date", combinedSheet.Rows(1), 0)
+    sortLastRow = combinedSheet.Cells(combinedSheet.Rows.Count, 1).End(xlUp).row
+    
+    If Not IsError(dateColIndex) And sortLastRow > 1 Then
+        With combinedSheet.Sort
+            .SortFields.Clear
+            ' xlDescending asegura que vaya de más reciente (fecha mayor) a más antiguo (fecha menor)
+            .SortFields.Add2 Key:=combinedSheet.Range(combinedSheet.Cells(2, CLng(dateColIndex)), combinedSheet.Cells(sortLastRow, CLng(dateColIndex))), _
+                             SortOn:=xlSortOnValues, Order:=xlDescending, DataOption:=xlSortNormal
+            .SetRange combinedSheet.Range("A1", combinedSheet.Cells(sortLastRow, UBound(columnOrder) + 1))
+            .Header = xlYes
+            .MatchCase = False
+            .Orientation = xlTopToBottom
+            .SortMethod = xlPinYin
+            .Apply
+        End With
+    End If
+    ' =======================================================
+
+    ' Guardar el archivo combinado
+    workbookCombined.Sheets(1).name = "My Team All Learning"
+    workbookCombined.SaveAs fileName:=ThisWorkbook.Path & "\Output\My Team All Learning_" & Format(Date, "dd_mm_yyyy")
+    workbookCombined.Close SaveChanges:=True
+
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+End Sub
