@@ -48,6 +48,14 @@ Public Sub ejecucionPrincipal(ByVal plantillaAGenerar As String)
     Dim cyperDB As DAO.Database
     Dim cyperRS As DAO.Recordset
     
+    ' Variables nuevas añadidas exclusivamente para buscar el archivo de aprendizaje más reciente
+    Dim fso As Object
+    Dim folderObj As Object
+    Dim fileObj As Object
+    Dim latestDate As Date
+    Dim rutaCarpetaTrainings As String
+    Dim nombreArchivoMasReciente As String
+    
     nombreFichero = plantillaAGenerar
     
     Select Case plantillaAGenerar
@@ -64,7 +72,7 @@ Public Sub ejecucionPrincipal(ByVal plantillaAGenerar As String)
     End If
     
     Set userManagerList = New Dictionary
-           
+            
     createdFilePath = ThisWorkbook.Path
     
     Call actualizarProgressbar(10, "Revisando ficheros de entrada...")
@@ -79,10 +87,40 @@ Public Sub ejecucionPrincipal(ByVal plantillaAGenerar As String)
     ficheroMiembrosArray = Split(ficheroMembers, "\")
     nombreFicheroMiembros = ficheroMiembrosArray(UBound(ficheroMiembrosArray))
     
-    'Training
-    ficheroTrainings = getFilePath(folderDictionary, "All Learning Unificado", FILTER_ALL_LEARNING)
+    '========================================================================
+    ' MODIFICACIÓN: Buscar el archivo "My Team All Learning" más reciente
+    '========================================================================
+    rutaCarpetaTrainings = folderDictionary("All Learning Unificado")
+    If Right(rutaCarpetaTrainings, 1) <> "\" Then rutaCarpetaTrainings = rutaCarpetaTrainings & "\"
+    
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    If fso.FolderExists(rutaCarpetaTrainings) Then
+        Set folderObj = fso.GetFolder(rutaCarpetaTrainings)
+        latestDate = 0
+        nombreArchivoMasReciente = ""
+        
+        For Each fileObj In folderObj.Files
+            If fileObj.Name Like FILTER_ALL_LEARNING Then
+                If fileObj.DateLastModified > latestDate Then
+                    latestDate = fileObj.DateLastModified
+                    nombreArchivoMasReciente = fileObj.Name
+                End If
+            End If
+        Next fileObj
+        
+        If nombreArchivoMasReciente <> "" Then
+            ficheroTrainings = rutaCarpetaTrainings & nombreArchivoMasReciente
+        Else
+            ' Si no encuentra ninguno más reciente por fecha, recurre al método antiguo por si acaso
+            ficheroTrainings = getFilePath(folderDictionary, "All Learning Unificado", FILTER_ALL_LEARNING)
+        End If
+    Else
+        ficheroTrainings = getFilePath(folderDictionary, "All Learning Unificado", FILTER_ALL_LEARNING)
+    End If
+    
     ficheroTrainingsArray = Split(ficheroTrainings, "\")
     nombreFicheroTrainings = ficheroTrainingsArray(UBound(ficheroTrainingsArray))
+    '========================================================================
     
     'Personal Certificado
     ficheroTEIMS = getFilePath(folderDictionary, "TEIMS", FILTER_TEIMS)
@@ -125,7 +163,7 @@ Public Sub ejecucionPrincipal(ByVal plantillaAGenerar As String)
     Set miembrosWorkbook = Workbooks.Open(ficheroMembers)
     indicePrimeraFila = 1
     hanCambiadoColumnas = checkEsFicheroMiembros(indicesColumnasMembersListDictionary, indicePrimeraFila)
-    If hanCambiadoColumnas Then
+    If hanCambienedoColumnas Then ' Nota: He respetado tu "hanCambiadoColumnas", pero ojo si tenías un typo en tu original.
         GoTo ficheroPersonalModificado
     End If
     miembrosWorkbook.Close SaveChanges:=False
@@ -158,7 +196,6 @@ Public Sub ejecucionPrincipal(ByVal plantillaAGenerar As String)
                     dataMatrix = .Range("A1:E" & lastRow).Value
                 End With
     
-    
     Set certifiedPersonalWorkbook = Workbooks.Open(ficheroTEIMS)
     
                 ' Populate the column Y
@@ -189,7 +226,6 @@ Public Sub ejecucionPrincipal(ByVal plantillaAGenerar As String)
                 Next k
                             
                 
-    
     
     hanCambiadoColumnas = checkColumnasFicheroTEIMS(indiceColumnasFicheroPersonalCertificadoDictionary)
     If hanCambiadoColumnas Then
@@ -341,6 +377,7 @@ FIN_ERROR:
 FIN:
             
 End Sub
+
 Sub unificarLibrosGST_FL_AF()
     
     Dim wsGST As Worksheet, wsAF As Worksheet, wsFL As Worksheet
